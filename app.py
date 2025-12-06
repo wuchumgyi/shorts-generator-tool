@@ -9,7 +9,7 @@ import re
 import random
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 國際版生成器", page_icon="🌍", layout="centered")
+st.set_page_config(page_title="Shorts 國際版生成器", page_icon="🎨", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
@@ -91,7 +91,7 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (標籤清洗版) ---
+# --- 4. AI 生成邏輯 (視覺流暢優化版) ---
 def generate_script(video_data, api_key):
     genai.configure(api_key=api_key)
     
@@ -103,14 +103,21 @@ def generate_script(video_data, api_key):
     st.info(f"🤖 使用模型：{model_name}")
     model = genai.GenerativeModel(model_name)
     
-    # Prompt 修改：明確禁止 #Veo #Sora
+    # Prompt 修改：加入視覺平滑化指令
     prompt = f"""
     Video Title: {video_data['title']}
     Channel: {video_data['channel']}
     
     Task: Create a viral 9-second Short plan.
     
-    REQUIREMENTS:
+    CRITICAL VISUAL INSTRUCTIONS (Fixing "Abrupt" transitions):
+    1. The 'veo_prompt' MUST describe a CONTINUOUS ACTION (One-shot).
+    2. Do NOT describe "Before" and "After" as separate states. Describe the PROCESS of changing.
+    3. Use keywords: "gradual transformation", "morphing", "flowing", "continuous movement", "slowly revealing".
+    4. Focus on the BOUNDARY where the change happens (e.g., the line where rust meets clean metal moving across the screen).
+    5. Avoid words like "suddenly", "instantly", "then", "final shot". The whole 9 seconds is ONE action.
+    
+    DATA REQUIREMENTS:
     1. 'veo_prompt', 'script_en', 'tags', 'comment' MUST be in ENGLISH.
     2. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
     3. 'tags' MUST include #AI.
@@ -120,7 +127,7 @@ def generate_script(video_data, api_key):
     {{
         "title_en": "Catchy English Title",
         "title_zh": "吸睛的繁體中文標題 (含Emoji)",
-        "veo_prompt": "Detailed prompt for Google Veo/Sora (English only), photorealistic, 4k",
+        "veo_prompt": "Detailed prompt for Google Veo/Sora (English only), photorealistic, 4k, slow motion, continuous shot, focusing on the satisfying process",
         "script_en": "9-second visual description (English)",
         "script_zh": "9秒畫面描述與分鏡 (繁體中文翻譯)",
         "tags": "#Tag1 #Tag2 #AI (English Only, NO model names)",
@@ -131,33 +138,23 @@ def generate_script(video_data, api_key):
         response = model.generate_content(prompt)
         result = json.loads(clean_json_string(response.text))
         
-        # --- Python 強力過濾 (後處理) ---
+        # --- Python 標籤過濾器 ---
         raw_tags = result.get('tags', '')
-        
-        # 1. 將標籤字串拆解成列表
-        # 處理可能的逗號或空格分隔
         tag_list = re.findall(r"#\w+", raw_tags)
-        
-        # 2. 定義要刪除的黑名單 (小寫比對)
         blacklist = ['#veo', '#sora', '#gemini', '#googleveo', '#openai', '#chatgpt']
         
-        # 3. 過濾並重建標籤
         clean_tags = []
         has_ai = False
         
         for tag in tag_list:
             lower_tag = tag.lower()
-            if lower_tag in blacklist:
-                continue # 跳過黑名單
-            if lower_tag == '#ai':
-                has_ai = True
+            if lower_tag in blacklist: continue
+            if lower_tag == '#ai': has_ai = True
             clean_tags.append(tag)
             
-        # 4. 確保 #AI 存在
         if not has_ai:
             clean_tags.append("#AI")
             
-        # 5. 轉回字串存入結果
         result['tags'] = " ".join(clean_tags)
              
         return result
@@ -192,7 +189,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         return False
 
 # --- 主介面 ---
-st.title("🌍 Shorts 國際版生成器")
+st.title("🎨 Shorts 國際版生成器 (平滑版)")
 keys = get_keys()
 
 if not keys:
@@ -214,7 +211,7 @@ else:
     url_input = st.text_input("👇 影片網址 (手動貼上 或 按上方搜尋)", value=default_val)
     
     st.markdown("### 步驟 2: AI 生成與存檔")
-    if st.button("✨ 生成中英文腳本並自動存檔", type="primary"):
+    if st.button("✨ 生成流暢腳本並自動存檔", type="primary"):
         if not url_input:
             st.warning("請先輸入網址")
         else:
@@ -224,7 +221,7 @@ else:
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (已過濾 Veo/Sora 標籤)..."):
+                    with st.spinner("2/3 AI 正在撰寫 (優化視覺連貫性)..."):
                         result = generate_script(v_info, keys['gemini'])
                     
                     if result:
@@ -234,13 +231,13 @@ else:
                         if saved:
                             st.markdown(f"""
                             <div class="success-box">
-                                <h3>✅ 成功！</h3>
+                                <h3>✅ 成功！腳本已優化</h3>
                                 <p><strong>Tags:</strong> {result['tags']}</p>
                             </div>
                             """, unsafe_allow_html=True)
                             
                             st.divider()
-                            st.caption("Veo Prompt")
+                            st.caption("Veo Prompt (Optimized for Smoothness)")
                             st.code(result['veo_prompt'], language="text")
                             
                             c1, c2 = st.columns(2)
