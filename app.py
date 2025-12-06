@@ -9,7 +9,7 @@ import re
 import random
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 國際版生成器", page_icon="🎨", layout="centered")
+st.set_page_config(page_title="Shorts 雙引擎生成器", page_icon="⚔️", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
@@ -91,7 +91,7 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (視覺流暢優化版) ---
+# --- 4. AI 生成邏輯 (新增 Kling 指令) ---
 def generate_script(video_data, api_key):
     genai.configure(api_key=api_key)
     
@@ -103,31 +103,32 @@ def generate_script(video_data, api_key):
     st.info(f"🤖 使用模型：{model_name}")
     model = genai.GenerativeModel(model_name)
     
-    # Prompt 修改：加入視覺平滑化指令
+    # Prompt 修改：新增 'kling_prompt' 要求
     prompt = f"""
     Video Title: {video_data['title']}
     Channel: {video_data['channel']}
     
     Task: Create a viral 9-second Short plan.
     
-    CRITICAL VISUAL INSTRUCTIONS (Fixing "Abrupt" transitions):
-    1. The 'veo_prompt' MUST describe a CONTINUOUS ACTION (One-shot).
-    2. Do NOT describe "Before" and "After" as separate states. Describe the PROCESS of changing.
-    3. Use keywords: "gradual transformation", "morphing", "flowing", "continuous movement", "slowly revealing".
-    4. Focus on the BOUNDARY where the change happens (e.g., the line where rust meets clean metal moving across the screen).
-    5. Avoid words like "suddenly", "instantly", "then", "final shot". The whole 9 seconds is ONE action.
+    CRITICAL VISUAL INSTRUCTIONS (For Smoothness):
+    1. Describe a CONTINUOUS ACTION (One-shot).
+    2. Focus on the PROCESS of changing/moving.
+    3. Use keywords: "gradual transformation", "morphing", "flowing".
+    4. NO "Before" and "After" separation.
     
     DATA REQUIREMENTS:
-    1. 'veo_prompt', 'script_en', 'tags', 'comment' MUST be in ENGLISH.
-    2. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
-    3. 'tags' MUST include #AI.
-    4. Do NOT use tool names in tags (e.g., NO #Veo, NO #Sora, NO #Gemini).
+    1. 'veo_prompt': Optimized for Google Veo (Smooth motion focus).
+    2. 'kling_prompt': Optimized for Kling AI (High fidelity focus, use keywords like: "8k resolution, photorealistic, raw style, best quality, highly detailed, cinema lighting").
+    3. 'script_en', 'tags', 'comment' MUST be in ENGLISH.
+    4. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
+    5. 'tags' MUST include #AI. Do NOT use tool names (#Veo, #Kling, #Sora).
     
     Output JSON ONLY:
     {{
         "title_en": "Catchy English Title",
         "title_zh": "吸睛的繁體中文標題 (含Emoji)",
-        "veo_prompt": "Detailed prompt for Google Veo/Sora (English only), photorealistic, 4k, slow motion, continuous shot, focusing on the satisfying process",
+        "veo_prompt": "Prompt for Google Veo (English)",
+        "kling_prompt": "Prompt for Kling AI (English, focus on realism & quality tags)",
         "script_en": "9-second visual description (English)",
         "script_zh": "9秒畫面描述與分鏡 (繁體中文翻譯)",
         "tags": "#Tag1 #Tag2 #AI (English Only, NO model names)",
@@ -141,7 +142,8 @@ def generate_script(video_data, api_key):
         # --- Python 標籤過濾器 ---
         raw_tags = result.get('tags', '')
         tag_list = re.findall(r"#\w+", raw_tags)
-        blacklist = ['#veo', '#sora', '#gemini', '#googleveo', '#openai', '#chatgpt']
+        # 把 kling 也加入過濾黑名單
+        blacklist = ['#veo', '#sora', '#gemini', '#kling', '#klingai', '#googleveo', '#openai']
         
         clean_tags = []
         has_ai = False
@@ -163,7 +165,7 @@ def generate_script(video_data, api_key):
         st.error(f"生成失敗: {e}")
         return None
 
-# --- 5. 存檔邏輯 ---
+# --- 5. 存檔邏輯 (新增 Kling 欄位) ---
 def save_to_sheet_auto(data, creds_dict, ref_url):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -171,12 +173,14 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         client = gspread.authorize(creds)
         sheet = client.open("Shorts_Content_Planner").sheet1
         
+        # 注意：這裡多了一個 kling_prompt 欄位
         row = [
             str(datetime.now())[:16],
             ref_url,
             data.get('title_en', ''),
             data.get('title_zh', ''),
             data.get('veo_prompt', ''),
+            data.get('kling_prompt', ''),  # 新增這一欄
             data.get('script_en', ''),
             data.get('script_zh', ''),
             str(data.get('tags', '')),
@@ -189,7 +193,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         return False
 
 # --- 主介面 ---
-st.title("🎨 Shorts 國際版生成器 (平滑版)")
+st.title("⚔️ Shorts 雙引擎生成器 (Veo + Kling)")
 keys = get_keys()
 
 if not keys:
@@ -211,7 +215,7 @@ else:
     url_input = st.text_input("👇 影片網址 (手動貼上 或 按上方搜尋)", value=default_val)
     
     st.markdown("### 步驟 2: AI 生成與存檔")
-    if st.button("✨ 生成流暢腳本並自動存檔", type="primary"):
+    if st.button("✨ 生成雙引擎腳本並存檔", type="primary"):
         if not url_input:
             st.warning("請先輸入網址")
         else:
@@ -221,7 +225,7 @@ else:
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (優化視覺連貫性)..."):
+                    with st.spinner("2/3 AI 正在撰寫 (Veo & Kling)..."):
                         result = generate_script(v_info, keys['gemini'])
                     
                     if result:
@@ -231,19 +235,18 @@ else:
                         if saved:
                             st.markdown(f"""
                             <div class="success-box">
-                                <h3>✅ 成功！腳本已優化</h3>
-                                <p><strong>Tags:</strong> {result['tags']}</p>
+                                <h3>✅ 雙引擎腳本已存檔！</h3>
+                                <p><strong>中文標題:</strong> {result['title_zh']}</p>
                             </div>
                             """, unsafe_allow_html=True)
                             
                             st.divider()
-                            st.caption("Veo Prompt (Optimized for Smoothness)")
-                            st.code(result['veo_prompt'], language="text")
-                            
                             c1, c2 = st.columns(2)
                             with c1:
-                                st.write("**English Title:**", result['title_en'])
-                                st.write("**Script (EN):**", result['script_en'])
+                                st.subheader("🇺🇸 Google Veo")
+                                st.code(result['veo_prompt'], language="text")
                             with c2:
-                                st.write("**中文標題:**", result['title_zh'])
-                                st.write("**腳本 (中):**", result['script_zh'])
+                                st.subheader("🇨🇳 Kling AI (可靈)")
+                                st.code(result['kling_prompt'], language="text")
+                                
+                            st.caption("Common Script (EN): " + result['script_en'])
