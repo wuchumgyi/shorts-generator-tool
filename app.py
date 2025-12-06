@@ -94,7 +94,7 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (語言分流核心) ---
+# --- 4. AI 生成邏輯 (語言分流 + 強制標籤) ---
 def generate_script(video_data, api_key):
     genai.configure(api_key=api_key)
     
@@ -107,7 +107,7 @@ def generate_script(video_data, api_key):
     st.info(f"🤖 使用模型：{model_name}")
     model = genai.GenerativeModel(model_name)
     
-    # Prompt: 明確要求欄位分離
+    # Prompt: 明確要求欄位分離 + 強制 #AI
     prompt = f"""
     Video Title: {video_data['title']}
     Channel: {video_data['channel']}
@@ -117,6 +117,7 @@ def generate_script(video_data, api_key):
     REQUIREMENTS:
     1. 'veo_prompt', 'script_en', 'tags', 'comment' MUST be in ENGLISH.
     2. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
+    3. 'tags' MUST include #AI.
     
     Output JSON ONLY:
     {{
@@ -125,13 +126,22 @@ def generate_script(video_data, api_key):
         "veo_prompt": "Detailed prompt for Google Veo/Sora (English only), photorealistic, 4k, slow motion",
         "script_en": "9-second visual description (English)",
         "script_zh": "9秒畫面描述與分鏡 (繁體中文翻譯)",
-        "tags": "#Tag1 #Tag2 (English Only)",
+        "tags": "#Tag1 #Tag2 #AI (English Only)",
         "comment": "Engaging first comment (English Only)"
     }}
     """
     try:
         response = model.generate_content(prompt)
-        return json.loads(clean_json_string(response.text))
+        result = json.loads(clean_json_string(response.text))
+        
+        # --- 雙重保險：程式強制檢查並加入 #AI ---
+        current_tags = result.get('tags', '')
+        if '#AI' not in current_tags and '#ai' not in current_tags:
+             # 如果 AI 忘了加，我們手動幫它加在最後面
+             result['tags'] = f"{current_tags} #AI".strip()
+             
+        return result
+
     except Exception as e:
         st.error(f"生成失敗: {e}")
         return None
@@ -153,7 +163,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
             data.get('veo_prompt', ''), # Veo Prompt
             data.get('script_en', ''),  # 英文腳本
             data.get('script_zh', ''),  # 中文腳本
-            str(data.get('tags', '')),  # 英文標籤
+            str(data.get('tags', '')),  # 英文標籤 (含 #AI)
             data.get('comment', '')     # 英文留言
         ]
         sheet.append_row(row)
@@ -208,7 +218,7 @@ else:
                             <div class="success-box">
                                 <h3>✅ 成功！資料已分離並存檔</h3>
                                 <p><strong>中文標題：</strong>{result['title_zh']}</p>
-                                <p><strong>English Title：</strong>{result['title_en']}</p>
+                                <p><strong>標籤確認：</strong>{result['tags']}</p>
                             </div>
                             """, unsafe_allow_html=True)
                             
