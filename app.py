@@ -248,23 +248,4 @@ else:
                     
                     if result:
                         with st.spinner("3/3 存檔中..."):
-                            saved = save_to_sheet_auto(result, keys['gcp_json'], url_input)
-                        
-                        if saved:
-                            st.markdown(f"""
-                            <div class="success-box">
-                                <h3>✅ 雙引擎腳本已存檔！</h3>
-                                <p><strong>中文標題:</strong> {result['title_zh']}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            st.divider()
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                st.subheader("🇺🇸 Google Veo")
-                                st.code(result['veo_prompt'], language="text")
-                            with c2:
-                                st.subheader("🇨🇳 Kling AI (可靈)")
-                                st.code(result['kling_prompt'], language="text")
-                                
-                            st.caption("Common Script (EN): " + result['script_en'])
+                            saved = save_to_sheet_auto(result, keys['
