@@ -10,12 +10,13 @@ import random
 import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 雙引擎生成器", page_icon="⚔️", layout="centered")
+st.set_page_config(page_title="Shorts 自動化 (支援最新版)", page_icon="🚀", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
     .stTextInput>div>div>input {border-radius: 10px;}
     .success-box {padding: 1rem; background-color: #d4edda; color: #155724; border-radius: 10px; margin-bottom: 1rem;}
+    .info-box {padding: 1rem; background-color: #cce5ff; color: #004085; border-radius: 10px; margin-bottom: 1rem;}
     .warning-box {padding: 1rem; background-color: #fff3cd; color: #856404; border-radius: 10px; margin-bottom: 1rem;}
     </style>
     """, unsafe_allow_html=True)
@@ -45,23 +46,13 @@ def clean_json_string(text):
         text = text[start:end+1]
     return text.strip()
 
-def get_first_available_model(api_key):
-    """嘗試獲取可用模型，優先使用 Flash，失敗則降級"""
-    genai.configure(api_key=api_key)
-    try:
-        # 測試性建立模型物件，確認是否支援
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        return 'gemini-1.5-flash'
-    except:
-        # 如果 Flash 不行，就回傳 Pro
-        return "gemini-pro"
-
 # --- 3. 搜尋與資訊獲取 ---
 def search_trending_video(api_key):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
+        # 搜尋高畫質、舒壓類型的 Shorts
         search_response = youtube.search().list(
-            q="Oddly Satisfying Shorts",
+            q="Satisfying 4k Shorts",
             type="video",
             part="id,snippet",
             maxResults=30,
@@ -94,95 +85,125 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (含 Retry 機制) ---
-def generate_script_with_retry(video_data, api_key):
+# --- 4. AI 生成邏輯 (自動偵測最強版本) ---
+def get_best_available_model(api_key):
+    """
+    自動測試並回傳當前 API Key 能用的「最高級」模型。
+    順序：3.0 -> 2.0 -> 1.5
+    """
     genai.configure(api_key=api_key)
     
-    # 自動選擇模型
-    model_name = get_first_available_model(api_key)
-    st.info(f"🤖 使用模型：{model_name}")
-    model = genai.GenerativeModel(model_name)
+    # 我們想要嘗試的候選名單 (優先度由高到低)
+    # 這裡包含了未來可能的命名規則
+    candidates = [
+        "gemini-3.0-pro", 
+        "gemini-3.0-flash", 
+        "gemini-2.0-flash-exp", 
+        "gemini-1.5-pro", 
+        "gemini-1.5-flash"
+    ]
+    
+    # 1. 先列出帳號內所有可用模型
+    available_models = []
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name.replace("models/", ""))
+    except:
+        return "gemini-1.5-flash" # 如果連列表都抓不到，直接回傳保底
+
+    # 2. 比對候選名單
+    for candidate in candidates:
+        if candidate in available_models:
+            return candidate
+            
+    # 3. 如果候選名單都沒中，回傳 1.5 flash 保底
+    return "gemini-1.5-flash"
+
+def generate_script_smart(video_data, api_key):
+    genai.configure(api_key=api_key)
+    
+    # 🔥 自動抓取最強模型
+    target_model = get_best_available_model(api_key)
     
     prompt = f"""
     Video Title: {video_data['title']}
     Channel: {video_data['channel']}
     
-    Task: Create a viral 9-second Short plan.
+    Task: Create a high-quality, viral 9-second Short plan.
     
-    CRITICAL VISUAL INSTRUCTIONS (For Smoothness):
-    1. Describe a CONTINUOUS ACTION (One-shot).
-    2. Focus on the PROCESS of changing/moving.
-    3. Use keywords: "gradual transformation", "morphing", "flowing".
-    4. NO "Before" and "After" separation.
+    CRITICAL VISUAL INSTRUCTIONS (To fix "Abrupt" transitions):
+    1. The 'veo_prompt' MUST describe a CONTINUOUS ACTION (One-shot).
+    2. Focus on the PROCESS. Use words like "gradual transformation", "flowing", "slowly revealing".
+    3. DO NOT use "Before" and "After" logic. Describe the boundary moving.
     
     DATA REQUIREMENTS:
-    1. 'veo_prompt': Optimized for Google Veo (Smooth motion focus).
-    2. 'kling_prompt': Optimized for Kling AI (High fidelity focus, keywords: "8k resolution, photorealistic, raw style, cinema lighting").
+    1. 'veo_prompt': Optimized for Google Veo (Smooth motion, photorealistic, 4k).
+    2. 'kling_prompt': Optimized for Kling AI (Keywords: "8k, raw style, best quality, highly detailed, cinema lighting").
     3. 'script_en', 'tags', 'comment' MUST be in ENGLISH.
     4. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
-    5. 'tags' MUST include #AI. Do NOT use tool names (#Veo, #Kling, #Sora).
+    5. 'tags' MUST include #AI. NO tool names (#Veo, #Kling, #Sora).
     
     Output JSON ONLY:
     {{
-        "title_en": "Catchy English Title",
-        "title_zh": "吸睛的繁體中文標題 (含Emoji)",
-        "veo_prompt": "Prompt for Google Veo (English)",
-        "kling_prompt": "Prompt for Kling AI (English)",
-        "script_en": "9-second visual description (English)",
-        "script_zh": "9秒畫面描述與分鏡 (繁體中文翻譯)",
-        "tags": "#Tag1 #Tag2 #AI (English Only, NO model names)",
-        "comment": "Engaging first comment (English Only)"
+        "title_en": "English Title",
+        "title_zh": "中文標題",
+        "veo_prompt": "Prompt for Veo (English)",
+        "kling_prompt": "Prompt for Kling (English)",
+        "script_en": "9-sec script (English)",
+        "script_zh": "9秒畫面描述 (繁體中文)",
+        "tags": "#Tag1 #Tag2 #AI",
+        "comment": "Comment"
     }}
     """
     
-    # --- Retry 迴圈 (最多試 3 次) ---
+    st.markdown(f"""
+    <div class="info-box">
+    <b>🤖 正在使用模型：{target_model}</b><br>
+    系統已自動為您挑選當前可用的最新版本。
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- 防手抖重試機制 ---
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            model = genai.GenerativeModel(target_model)
             response = model.generate_content(prompt)
             result = json.loads(clean_json_string(response.text))
             
-            # 標籤過濾
+            # 標籤清洗
             raw_tags = result.get('tags', '')
             tag_list = re.findall(r"#\w+", raw_tags)
             blacklist = ['#veo', '#sora', '#gemini', '#kling', '#klingai', '#googleveo', '#openai']
-            
-            clean_tags = []
-            has_ai = False
-            for tag in tag_list:
-                lower_tag = tag.lower()
-                if lower_tag in blacklist: continue
-                if lower_tag == '#ai': has_ai = True
-                clean_tags.append(tag)
-            
-            if not has_ai: clean_tags.append("#AI")
+            clean_tags = [t for t in tag_list if t.lower() not in blacklist]
+            if not any(t.lower() == '#ai' for t in clean_tags): clean_tags.append("#AI")
             result['tags'] = " ".join(clean_tags)
-                 
-            return result # 成功就回傳
+            
+            return result
 
         except Exception as e:
             error_msg = str(e)
-            # 檢查是否為 Quota (429) 錯誤
+            
+            # 處理 429 速度限制
             if "429" in error_msg or "quota" in error_msg.lower():
-                wait_time = 60 # 等待 60 秒
+                wait_seconds = 20 
                 st.markdown(f"""
                 <div class="warning-box">
-                <b>⏳ 觸發免費版頻率限制 (429 Error)</b><br>
-                正在自動等待 {wait_time} 秒後重試 (第 {attempt + 1}/{max_retries} 次)...
+                <b>⏳ 速度限制 (休息一下)</b><br>
+                免費版額度吃緊，系統冷卻中... {wait_seconds} 秒 (第 {attempt+1}/{max_retries} 次)
                 </div>
                 """, unsafe_allow_html=True)
-                time.sleep(wait_time) # 程式暫停
-            elif "404" in error_msg:
-                st.warning("⚠️ 找不到指定模型，嘗試切換至 gemini-pro...")
-                model = genai.GenerativeModel('gemini-pro')
-            else:
-                st.error(f"生成失敗: {e}")
-                return None
-    
-    st.error("❌ 重試次數過多，請稍後再試。")
+                time.sleep(wait_seconds)
+                continue
+            
+            st.error(f"生成發生錯誤: {e}")
+            return None
+            
+    st.error("❌ 系統忙碌中，請過 1 分鐘後再試。")
     return None
 
-# --- 5. 存檔邏輯 (Veo + Kling 欄位) ---
+# --- 5. 存檔邏輯 ---
 def save_to_sheet_auto(data, creds_dict, ref_url):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -196,7 +217,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
             data.get('title_en', ''),
             data.get('title_zh', ''),
             data.get('veo_prompt', ''),
-            data.get('kling_prompt', ''),  # Kling 欄位
+            data.get('kling_prompt', ''),
             data.get('script_en', ''),
             data.get('script_zh', ''),
             str(data.get('tags', '')),
@@ -209,7 +230,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         return False
 
 # --- 主介面 ---
-st.title("⚔️ Shorts 雙引擎生成器 (Veo + Kling)")
+st.title("🚀 Shorts 生成器 (未來兼容版)")
 keys = get_keys()
 
 if not keys:
@@ -231,29 +252,27 @@ else:
     url_input = st.text_input("👇 影片網址 (手動貼上 或 按上方搜尋)", value=default_val)
     
     st.markdown("### 步驟 2: AI 生成與存檔")
-    if st.button("✨ 生成雙引擎腳本並存檔", type="primary"):
+    if st.button("✨ 生成高品質腳本並存檔", type="primary"):
         if not url_input:
             st.warning("請先輸入網址")
         else:
             vid = extract_video_id(url_input)
             if vid:
-                with st.spinner("1/3 分析影片..."):
+                with st.spinner("1/3 分析影片中..."):
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (若卡住是在自動排隊中)..."):
-                        # 使用新的 retry 函式
-                        result = generate_script_with_retry(v_info, keys['gemini'])
+                    with st.spinner("2/3 AI 正在撰寫 (自動選擇最強模型)..."):
+                        result = generate_script_smart(v_info, keys['gemini'])
                     
                     if result:
                         with st.spinner("3/3 存檔中..."):
-                            # ⚠️ 這裡就是剛剛出錯的地方，現在已修復
                             saved = save_to_sheet_auto(result, keys['gcp_json'], url_input)
                         
                         if saved:
                             st.markdown(f"""
                             <div class="success-box">
-                                <h3>✅ 雙引擎腳本已存檔！</h3>
+                                <h3>✅ 成功！</h3>
                                 <p><strong>中文標題:</strong> {result['title_zh']}</p>
                             </div>
                             """, unsafe_allow_html=True)
@@ -264,7 +283,7 @@ else:
                                 st.subheader("🇺🇸 Google Veo")
                                 st.code(result['veo_prompt'], language="text")
                             with c2:
-                                st.subheader("🇨🇳 Kling AI (可靈)")
+                                st.subheader("🇨🇳 Kling AI")
                                 st.code(result['kling_prompt'], language="text")
                                 
-                            st.caption("Common Script (EN): " + result['script_en'])
+                            st.caption("Common Script: " + result['script_zh'])
