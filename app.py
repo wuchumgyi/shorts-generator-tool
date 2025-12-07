@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 import re
 import random
-import time  # 用來做等待倒數
+import time
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="Shorts 雙引擎生成器", page_icon="⚔️", layout="centered")
@@ -173,7 +173,6 @@ def generate_script_with_retry(video_data, api_key):
                 """, unsafe_allow_html=True)
                 time.sleep(wait_time) # 程式暫停
             elif "404" in error_msg:
-                # 如果是模型找不到，嘗試降級模型再試一次
                 st.warning("⚠️ 找不到指定模型，嘗試切換至 gemini-pro...")
                 model = genai.GenerativeModel('gemini-pro')
             else:
@@ -248,4 +247,24 @@ else:
                     
                     if result:
                         with st.spinner("3/3 存檔中..."):
-                            saved = save_to_sheet_auto(result, keys['
+                            # ⚠️ 這裡就是剛剛出錯的地方，現在已修復
+                            saved = save_to_sheet_auto(result, keys['gcp_json'], url_input)
+                        
+                        if saved:
+                            st.markdown(f"""
+                            <div class="success-box">
+                                <h3>✅ 雙引擎腳本已存檔！</h3>
+                                <p><strong>中文標題:</strong> {result['title_zh']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            st.divider()
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                st.subheader("🇺🇸 Google Veo")
+                                st.code(result['veo_prompt'], language="text")
+                            with c2:
+                                st.subheader("🇨🇳 Kling AI (可靈)")
+                                st.code(result['kling_prompt'], language="text")
+                                
+                            st.caption("Common Script (EN): " + result['script_en'])
