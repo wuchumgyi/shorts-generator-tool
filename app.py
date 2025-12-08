@@ -10,7 +10,7 @@ import random
 import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 終極生成器", page_icon="💎", layout="centered")
+st.set_page_config(page_title="Shorts 終極生成器 (盲測版)", page_icon="💎", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
@@ -49,7 +49,7 @@ def clean_json_string(text):
 def search_trending_video(api_key):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
-        # 搜尋高畫質、舒壓類型的 Shorts
+        # 搜尋關鍵字優化：加上 4k, satisfying 以確保素材品質
         search_response = youtube.search().list(
             q="Satisfying 4k Shorts",
             type="video",
@@ -85,12 +85,15 @@ def get_video_info(video_id, api_key):
         return None
 
 # --- 4. AI 生成邏輯 (盲測 + 強制重試) ---
-def generate_script_direct(video_data, api_key):
+# 這個版本完全不去問 Google 有哪些模型，直接拿我們指定的清單去撞，省流量
+def generate_script_blindly(video_data, api_key):
     genai.configure(api_key=api_key)
     
-    # 我們不再去問 Google 有什麼模型，直接拿這兩個去撞
-    # 優先順序：2.0 Flash Exp -> 1.5 Flash
-    models_to_try = ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
+    # 這是我們要嘗試的模型清單，按優先順序排列
+    # 1. 優先試 Gemini 2.0 Flash (最新最強)
+    # 2. 如果不行，試 Gemini 1.5 Flash (最穩)
+    # 3. 最後保底 Gemini 1.5 Pro
+    models_to_try = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
     
     prompt = f"""
     Video Title: {video_data['title']}
@@ -125,16 +128,16 @@ def generate_script_direct(video_data, api_key):
     
     # --- 雙層迴圈：遍歷模型 -> 處理重試 ---
     for model_name in models_to_try:
-        # 每個模型最多試 3 次 (針對 429 錯誤)
+        # 針對當前模型，最多試 3 次 (處理 429 錯誤)
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # 這裡直接建立模型，不檢查是否存在 (節省額度)
+                # 直接建立模型，不浪費額度去檢查是否存在
                 model = genai.GenerativeModel(model_name)
                 
-                # 發送請求
+                # 只在第一次嘗試時顯示提示
                 if attempt == 0:
-                    st.toast(f"🤖 嘗試使用模型：{model_name} ...")
+                    st.toast(f"🤖 正在嘗試模型：{model_name} ...")
                 
                 response = model.generate_content(prompt)
                 result = json.loads(clean_json_string(response.text))
@@ -153,28 +156,28 @@ def generate_script_direct(video_data, api_key):
                 error_msg = str(e)
                 
                 # 狀況 A: 404 (找不到模型 / 帳號不支援)
-                # 直接跳出內層迴圈，換下一個模型試試
+                # 直接跳出內層迴圈，換下一個模型試試，不要在這裡浪費時間重試
                 if "404" in error_msg or "not found" in error_msg.lower():
                     # st.warning(f"{model_name} 暫不可用，切換下一模型...")
                     break 
 
                 # 狀況 B: 429 (速度太快) -> 等待並在原地重試
                 if "429" in error_msg or "quota" in error_msg.lower():
-                    wait_seconds = 30 # 加長等待時間到 30 秒，更保險
+                    wait_seconds = 25 # 等待 25 秒
                     st.markdown(f"""
                     <div class="warning-box">
                     <b>⏳ Google 叫我們休息一下 (429 Error)</b><br>
-                    使用 {model_name} 請求過快。自動冷卻 {wait_seconds} 秒後重試...
+                    模型 {model_name} 請求過快。自動冷卻 {wait_seconds} 秒後重試...
                     </div>
                     """, unsafe_allow_html=True)
                     time.sleep(wait_seconds)
-                    continue # 繼續下一次 attempt
+                    continue # 繼續下一次 attempt (原地重試)
                 
-                # 其他錯誤
-                st.error(f"未知錯誤 ({model_name}): {e}")
+                # 其他錯誤 (例如 500 伺服器錯誤)
+                st.error(f"發生未知錯誤 ({model_name}): {e}")
                 break
                 
-    st.error("❌ 所有模型都嘗試失敗。請檢查 API Key 是否正確，或稍後再試。")
+    st.error("❌ 所有模型都嘗試失敗。請確認 API Key 正確，或稍後再試。")
     return None, None
 
 # --- 5. 存檔邏輯 ---
@@ -236,8 +239,8 @@ else:
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (嘗試 Gemini 2.0 / 1.5)..."):
-                        result, used_model = generate_script_direct(v_info, keys['gemini'])
+                    with st.spinner("2/3 AI 正在撰寫 (直接盲測模型，不浪費額度)..."):
+                        result, used_model = generate_script_blindly(v_info, keys['gemini'])
                     
                     if result:
                         with st.spinner("3/3 存檔中..."):
