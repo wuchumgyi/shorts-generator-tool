@@ -8,12 +8,14 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 獵手 (流暢二創版)", page_icon="🎨", layout="wide")
+st.set_page_config(page_title="Shorts 獵手 (影音預覽版)", page_icon="📺", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
     .video-card {background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 10px;}
     .success-box {padding: 10px; background-color: #d4edda; color: #155724; border-radius: 5px;}
+    /* 讓左側列表的影片標題好看一點 */
+    .video-title {font-size: 16px; font-weight: bold; margin-bottom: 5px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -90,7 +92,7 @@ def search_videos(api_key, keyword, max_results=10):
         st.error(f"搜尋失敗: {e}")
         return []
 
-# --- 5. AI 生成 (針對「流暢二創」優化的指令) ---
+# --- 5. AI 生成 (二創指令) ---
 def generate_creative_content(title, desc, api_key, model_name):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name)
@@ -102,21 +104,21 @@ def generate_creative_content(title, desc, api_key, model_name):
     Task: Create a plan for a NEW, ORIGINAL 9-second YouTube Short inspired by this source (Derivative Work/二創).
     
     CRITICAL INSTRUCTIONS:
-    1. **NO Timecodes:** The script MUST be a single, continuous paragraph describing the flow of the 9-second video. Do NOT use "00:01", "Scene 1", etc. It must read like a smooth story.
-    2. **Be Creative & Original:** Do NOT just copy the source video. Extract the "satisfying element" (e.g., cutting, flowing, crushing) but CHANGE the object, material, or setting. Make it a unique new creation.
+    1. **NO Timecodes:** The script MUST be a single, continuous paragraph describing the flow of the 9-second video.
+    2. **Be Creative:** Extract the satisfying element but CHANGE the object or material.
     3. **Language:** - 'veo_prompt', 'kling_prompt', 'script_en', 'tags', 'comment': English ONLY.
        - 'title_zh', 'script_zh': Traditional Chinese (繁體中文).
     
     Output JSON ONLY:
     {{
         "title_en": "Catchy English Title",
-        "title_zh": "吸睛中文標題 (繁體中文)",
-        "veo_prompt": "Highly detailed English prompt for AI video generation (continuous shot, smooth motion)",
-        "kling_prompt": "Highly detailed English prompt for Kling AI (8k, photorealistic, cinematic lighting)",
-        "script_en": "A smooth, continuous paragraph describing the 9-second visual flow (No timecodes, English)",
-        "script_zh": "一段流暢的9秒畫面描述，不要分秒數，像在講一個連貫的畫面 (繁體中文)",
-        "tags": "#Tag1 #Tag2 #AI (English Only)",
-        "comment": "Engaging first comment (English Only)"
+        "title_zh": "吸睛中文標題",
+        "veo_prompt": "Prompt for Veo (English, continuous shot)",
+        "kling_prompt": "Prompt for Kling (English, 8k realism)",
+        "script_en": "9-sec visual flow description (English, No timecodes)",
+        "script_zh": "9秒連貫畫面描述 (繁體中文, 無分鏡秒數)",
+        "tags": "#Tag1 #Tag2 #AI",
+        "comment": "Comment (English)"
     }}
     """
     try:
@@ -152,7 +154,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("🎨 Shorts 獵手 (流暢二創版)")
+st.title("📺 Shorts 獵手 (影音預覽版)")
 
 if not keys["gemini"]:
     st.warning("⚠️ 請檢查 Secrets 設定")
@@ -180,41 +182,53 @@ else:
     # 內容區塊
     if 'search_results' in st.session_state and st.session_state.search_results:
         st.divider()
-        col_list, col_detail = st.columns([1, 2])
+        col_list, col_detail = st.columns([1.2, 2]) # 調整比例，讓左邊寬一點放播放器
 
+        # --- 左側：搜尋結果 (影音預覽) ---
         with col_list:
-            st.markdown("### 📺 影片列表")
+            st.markdown("### 📋 搜尋結果 (可直接播放)")
             for vid in st.session_state.search_results:
-                if st.button(f"📄 {vid['title'][:15]}...", key=vid['id']):
-                    st.session_state.selected_video = vid
-                    # 切換時清空 AI 暫存，避免混淆
-                    for key in ['ai_title_en', 'ai_title_zh', 'ai_script_en', 'ai_script_zh', 'ai_tags', 'ai_comment', 'ai_veo', 'ai_kling']:
-                        if key in st.session_state: del st.session_state[key]
-                    st.rerun()
+                with st.container():
+                    # 1. 標題與連結
+                    st.markdown(f"**[{vid['title']}]({vid['url']})**")
+                    
+                    # 2. 影片預覽 (直接嵌入)
+                    st.video(vid['url'])
+                    
+                    # 3. 選取按鈕
+                    if st.button(f"👉 選這部 ({vid['channel']})", key=vid['id']):
+                        st.session_state.selected_video = vid
+                        # 切換時清空 AI 暫存
+                        for key in ['ai_title_en', 'ai_title_zh', 'ai_script_en', 'ai_script_zh', 'ai_tags', 'ai_comment', 'ai_veo', 'ai_kling']:
+                            if key in st.session_state: del st.session_state[key]
+                        st.rerun()
+                    st.divider()
 
+        # --- 右側：編輯詳情 ---
         with col_detail:
             selected = st.session_state.get('selected_video')
             if selected:
-                st.subheader("📝 編輯與存檔")
-                st.video(selected['url'])
-                st.caption(f"來源: {selected['channel']}")
+                # 為了方便對照，這裡也可以放一個小的播放器或連結
+                st.info(f"✅ 當前選中：{selected['title']}")
+                st.markdown(f"🔗 **原始連結：** [{selected['url']}]({selected['url']})")
+                
                 st.markdown("---")
 
                 # AI 按鈕
                 col_btn, _ = st.columns([1, 1])
                 with col_btn:
-                    if st.button("✨ AI 生成二創腳本 (自動存檔)"):
+                    if st.button("✨ AI 生成二創腳本 (自動存檔)", type="primary"):
                         if not selected_model_name:
                             st.error("請先選擇 AI 模型")
                         else:
-                            with st.spinner(f"AI ({selected_model_name}) 正在構思二創腳本..."):
+                            with st.spinner(f"AI ({selected_model_name}) 正在構思..."):
                                 ai_data = generate_creative_content(
                                     selected['title'], selected['desc'], 
                                     keys['gemini'], selected_model_name
                                 )
                                 
                                 if "error" not in ai_data:
-                                    # 1. 存入 Session State
+                                    # 存入 Session State
                                     st.session_state.ai_title_en = ai_data.get('title_en', '')
                                     st.session_state.ai_title_zh = ai_data.get('title_zh', '')
                                     st.session_state.ai_veo = ai_data.get('veo_prompt', '')
@@ -224,7 +238,7 @@ else:
                                     st.session_state.ai_tags = ai_data.get('tags', '')
                                     st.session_state.ai_comment = ai_data.get('comment', '')
                                     
-                                    # 2. 自動存檔
+                                    # 自動存檔
                                     data_to_save = {
                                         'url': selected['url'],
                                         'title_en': ai_data.get('title_en', ''),
