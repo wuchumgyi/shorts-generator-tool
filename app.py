@@ -8,7 +8,7 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 獵手 (穩定版)", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Shorts 獵手 (穩定兼容版)", page_icon="🎯", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
@@ -65,12 +65,13 @@ def search_videos(api_key, keyword, max_results=10):
         st.error(f"搜尋失敗: {e}")
         return []
 
-# --- 4. AI 生成功能 (按需觸發) ---
+# --- 4. AI 生成功能 (改回 gemini-pro) ---
 def generate_derivative_content(title, desc, api_key):
     """生成二創腳本與標籤"""
     genai.configure(api_key=api_key)
-    # 使用 1.5 Flash 即可，速度快且省額度
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    # ⚠️ 修改重點：改回最標準的 'gemini-pro'，避免 404 錯誤
+    model = genai.GenerativeModel("gemini-pro")
     
     prompt = f"""
     Video Title: {title}
@@ -90,6 +91,7 @@ def generate_derivative_content(title, desc, api_key):
         response = model.generate_content(prompt)
         return json.loads(clean_json_string(response.text))
     except Exception as e:
+        # 如果出錯，回傳錯誤訊息
         return {"error": str(e)}
 
 # --- 5. 存檔邏輯 ---
@@ -116,7 +118,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("🎯 Shorts 獵手 (AI 輔助版)")
+st.title("🎯 Shorts 獵手 (穩定兼容版)")
 keys = get_keys()
 
 if not keys:
@@ -156,12 +158,12 @@ else:
                 # 點擊按鈕切換選中影片
                 if st.button(f"📄 {vid['title'][:15]}...", key=vid['id']):
                     st.session_state.selected_video = vid
-                    # 切換時重置，避免殘留上一部的資料
+                    # 切換時重置
                     st.session_state.ai_title = vid['title']
                     st.session_state.ai_script = ""
                     st.session_state.ai_tags = ""
                     st.session_state.ai_keywords = ""
-                    st.rerun() # 強制刷新畫面
+                    st.rerun()
 
         # 右側：編輯詳情
         with col_detail:
@@ -179,7 +181,7 @@ else:
                 col_ai_btn, _ = st.columns([1, 1])
                 with col_ai_btn:
                     if st.button("✨ AI 幫我寫二創腳本"):
-                        with st.spinner("AI 正在思考中 (消耗 1 次額度)..."):
+                        with st.spinner("AI 正在思考中 (使用 gemini-pro)..."):
                             ai_data = generate_derivative_content(selected['title'], selected['desc'], keys['gemini'])
                             
                             if "error" not in ai_data:
@@ -189,13 +191,11 @@ else:
                                 st.session_state.ai_tags = ai_data.get('tags', '')
                                 st.session_state.ai_keywords = ai_data.get('keywords', '')
                                 st.success("AI 生成完畢！")
-                                st.rerun() # 刷新頁面以顯示填入的內容
+                                st.rerun()
                             else:
                                 st.error(f"AI 生成失敗: {ai_data['error']}")
 
                 # --- 編輯表單 ---
-                # 使用 text_input 的 key 綁定 session_state，實現自動填入
-                
                 new_title = st.text_input("影片標題", key="ai_title")
                 
                 c_tag, c_kw = st.columns(2)
