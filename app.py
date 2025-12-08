@@ -10,13 +10,12 @@ import random
 import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 生成器 (省流量版)", page_icon="⚡", layout="centered")
+st.set_page_config(page_title="Shorts 終極生成器", page_icon="💎", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
     .stTextInput>div>div>input {border-radius: 10px;}
     .success-box {padding: 1rem; background-color: #d4edda; color: #155724; border-radius: 10px; margin-bottom: 1rem;}
-    .info-box {padding: 1rem; background-color: #cce5ff; color: #004085; border-radius: 10px; margin-bottom: 1rem;}
     .warning-box {padding: 1rem; background-color: #fff3cd; color: #856404; border-radius: 10px; margin-bottom: 1rem;}
     </style>
     """, unsafe_allow_html=True)
@@ -50,6 +49,7 @@ def clean_json_string(text):
 def search_trending_video(api_key):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
+        # 搜尋高畫質、舒壓類型的 Shorts
         search_response = youtube.search().list(
             q="Satisfying 4k Shorts",
             type="video",
@@ -84,45 +84,13 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (加上快取，大幅減少 API 呼叫) ---
-
-# 🔥 關鍵修改：加上 @st.cache_resource
-# 這會讓 Streamlit 記住結果，不會每次刷新頁面都去問 Google，節省大量額度
-@st.cache_resource(ttl=3600) 
-def get_best_available_model(_api_key_wrapper):
-    """
-    自動測試並回傳當前 API Key 能用的「最高級」模型。
-    結果會被快取 1 小時 (ttl=3600)。
-    """
-    api_key = _api_key_wrapper['key'] # 解包
+# --- 4. AI 生成邏輯 (盲測 + 強制重試) ---
+def generate_script_direct(video_data, api_key):
     genai.configure(api_key=api_key)
     
-    candidates = [
-        "gemini-2.0-flash-exp", 
-        "gemini-1.5-pro", 
-        "gemini-1.5-flash"
-    ]
-    
-    # 嘗試列出模型 (這個動作很耗額度，所以必須快取)
-    available_models = []
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name.replace("models/", ""))
-    except:
-        return "gemini-1.5-flash" # 保底
-
-    for candidate in candidates:
-        if candidate in available_models:
-            return candidate
-            
-    return "gemini-1.5-flash"
-
-def generate_script_smart(video_data, api_key):
-    genai.configure(api_key=api_key)
-    
-    # 使用包裝器傳遞 key 以配合 cache
-    target_model = get_best_available_model({'key': api_key})
+    # 我們不再去問 Google 有什麼模型，直接拿這兩個去撞
+    # 優先順序：2.0 Flash Exp -> 1.5 Flash
+    models_to_try = ["gemini-2.0-flash-exp", "gemini-1.5-flash"]
     
     prompt = f"""
     Video Title: {video_data['title']}
@@ -130,17 +98,17 @@ def generate_script_smart(video_data, api_key):
     
     Task: Create a high-quality, viral 9-second Short plan.
     
-    CRITICAL VISUAL INSTRUCTIONS:
+    CRITICAL VISUAL INSTRUCTIONS (To fix "Abrupt" transitions):
     1. The 'veo_prompt' MUST describe a CONTINUOUS ACTION (One-shot).
-    2. Focus on the PROCESS (morphing, flowing).
-    3. DO NOT use "Before" and "After" logic.
+    2. Focus on the PROCESS. Use words like "gradual transformation", "flowing", "slowly revealing".
+    3. DO NOT use "Before" and "After" logic. Describe the boundary moving.
     
     DATA REQUIREMENTS:
     1. 'veo_prompt': Optimized for Google Veo (Smooth motion, photorealistic, 4k).
     2. 'kling_prompt': Optimized for Kling AI (Keywords: "8k, raw style, best quality, cinema lighting").
-    3. 'script_en', 'tags', 'comment' in ENGLISH.
-    4. 'script_zh', 'title_zh' in TRADITIONAL CHINESE.
-    5. 'tags' MUST include #AI. NO tool names.
+    3. 'script_en', 'tags', 'comment' MUST be in ENGLISH.
+    4. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
+    5. 'tags' MUST include #AI. NO tool names (#Veo, #Kling, #Sora).
     
     Output JSON ONLY:
     {{
@@ -155,50 +123,59 @@ def generate_script_smart(video_data, api_key):
     }}
     """
     
-    st.markdown(f"""
-    <div class="info-box">
-    <b>🤖 正在使用模型：{target_model}</b>
-    </div>
-    """, unsafe_allow_html=True)
+    # --- 雙層迴圈：遍歷模型 -> 處理重試 ---
+    for model_name in models_to_try:
+        # 每個模型最多試 3 次 (針對 429 錯誤)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # 這裡直接建立模型，不檢查是否存在 (節省額度)
+                model = genai.GenerativeModel(model_name)
+                
+                # 發送請求
+                if attempt == 0:
+                    st.toast(f"🤖 嘗試使用模型：{model_name} ...")
+                
+                response = model.generate_content(prompt)
+                result = json.loads(clean_json_string(response.text))
+                
+                # 標籤清洗
+                raw_tags = result.get('tags', '')
+                tag_list = re.findall(r"#\w+", raw_tags)
+                blacklist = ['#veo', '#sora', '#gemini', '#kling', '#klingai', '#googleveo', '#openai']
+                clean_tags = [t for t in tag_list if t.lower() not in blacklist]
+                if not any(t.lower() == '#ai' for t in clean_tags): clean_tags.append("#AI")
+                result['tags'] = " ".join(clean_tags)
+                
+                return result, model_name # 成功！直接回傳
 
-    # --- 防手抖重試機制 ---
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            model = genai.GenerativeModel(target_model)
-            response = model.generate_content(prompt)
-            result = json.loads(clean_json_string(response.text))
-            
-            # 標籤清洗
-            raw_tags = result.get('tags', '')
-            tag_list = re.findall(r"#\w+", raw_tags)
-            blacklist = ['#veo', '#sora', '#gemini', '#kling', '#klingai', '#googleveo', '#openai']
-            clean_tags = [t for t in tag_list if t.lower() not in blacklist]
-            if not any(t.lower() == '#ai' for t in clean_tags): clean_tags.append("#AI")
-            result['tags'] = " ".join(clean_tags)
-            
-            return result
+            except Exception as e:
+                error_msg = str(e)
+                
+                # 狀況 A: 404 (找不到模型 / 帳號不支援)
+                # 直接跳出內層迴圈，換下一個模型試試
+                if "404" in error_msg or "not found" in error_msg.lower():
+                    # st.warning(f"{model_name} 暫不可用，切換下一模型...")
+                    break 
 
-        except Exception as e:
-            error_msg = str(e)
-            
-            # 處理 429 速度限制
-            if "429" in error_msg or "quota" in error_msg.lower():
-                wait_seconds = 20 
-                st.markdown(f"""
-                <div class="warning-box">
-                <b>⏳ 速度限制 (休息一下)</b><br>
-                免費版額度吃緊，系統冷卻中... {wait_seconds} 秒 (第 {attempt+1}/{max_retries} 次)
-                </div>
-                """, unsafe_allow_html=True)
-                time.sleep(wait_seconds)
-                continue
-            
-            st.error(f"生成發生錯誤: {e}")
-            return None
-            
-    st.error("❌ 系統忙碌中，請過 1 分鐘後再試。")
-    return None
+                # 狀況 B: 429 (速度太快) -> 等待並在原地重試
+                if "429" in error_msg or "quota" in error_msg.lower():
+                    wait_seconds = 30 # 加長等待時間到 30 秒，更保險
+                    st.markdown(f"""
+                    <div class="warning-box">
+                    <b>⏳ Google 叫我們休息一下 (429 Error)</b><br>
+                    使用 {model_name} 請求過快。自動冷卻 {wait_seconds} 秒後重試...
+                    </div>
+                    """, unsafe_allow_html=True)
+                    time.sleep(wait_seconds)
+                    continue # 繼續下一次 attempt
+                
+                # 其他錯誤
+                st.error(f"未知錯誤 ({model_name}): {e}")
+                break
+                
+    st.error("❌ 所有模型都嘗試失敗。請檢查 API Key 是否正確，或稍後再試。")
+    return None, None
 
 # --- 5. 存檔邏輯 ---
 def save_to_sheet_auto(data, creds_dict, ref_url):
@@ -227,7 +204,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         return False
 
 # --- 主介面 ---
-st.title("⚡ Shorts 生成器 (快取省流版)")
+st.title("💎 Shorts 終極生成器")
 keys = get_keys()
 
 if not keys:
@@ -259,8 +236,8 @@ else:
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (使用快取優化)..."):
-                        result = generate_script_smart(v_info, keys['gemini'])
+                    with st.spinner("2/3 AI 正在撰寫 (嘗試 Gemini 2.0 / 1.5)..."):
+                        result, used_model = generate_script_direct(v_info, keys['gemini'])
                     
                     if result:
                         with st.spinner("3/3 存檔中..."):
@@ -269,7 +246,7 @@ else:
                         if saved:
                             st.markdown(f"""
                             <div class="success-box">
-                                <h3>✅ 成功！</h3>
+                                <h3>✅ 成功！(使用模型: {used_model})</h3>
                                 <p><strong>中文標題:</strong> {result['title_zh']}</p>
                             </div>
                             """, unsafe_allow_html=True)
