@@ -10,12 +10,11 @@ import random
 import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="YouTube Shorts 獵手", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Shorts 獵手 (AI 輔助版)", page_icon="🎯", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
-    .reportview-container .main .block-container {padding-top: 2rem;}
-    .video-container {border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);}
+    .video-card {background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -39,17 +38,16 @@ def clean_json_string(text):
         text = text[start:end+1]
     return text.strip()
 
-# --- 3. YouTube 搜尋功能 (核心) ---
-def search_videos(api_key, keyword, max_results=5):
+# --- 3. YouTube 搜尋功能 ---
+def search_videos(api_key, keyword, max_results=10):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
-        # 搜尋特定的關鍵字
         search_response = youtube.search().list(
             q=keyword,
             type="video",
             part="id,snippet",
             maxResults=max_results,
-            order="viewCount", # 找觀看數最高的 (熱門)
+            order="viewCount",
             videoDuration="short"
         ).execute()
 
@@ -61,39 +59,40 @@ def search_videos(api_key, keyword, max_results=5):
                 'url': f"https://www.youtube.com/shorts/{vid}",
                 'title': item['snippet']['title'],
                 'thumbnail': item['snippet']['thumbnails']['high']['url'],
-                'channel': item['snippet']['channelTitle']
+                'channel': item['snippet']['channelTitle'],
+                'desc': item['snippet']['description']
             })
         return videos
     except Exception as e:
         st.error(f"搜尋失敗: {e}")
         return []
 
-def get_video_details(api_key, video_id):
-    try:
-        youtube = build('youtube', 'v3', developerKey=api_key)
-        response = youtube.videos().list(part="snippet,statistics", id=video_id).execute()
-        if not response['items']: return None
-        return response['items'][0]['snippet']
-    except:
-        return None
-
-# --- 4. AI 輔助功能 (改為按需觸發) ---
-def generate_tags_and_keywords(title, desc, api_key):
-    """只生成標籤和關鍵字，負擔小，速度快"""
+# --- 4. AI 生成功能 (按需觸發) ---
+def generate_derivative_content(title, desc, api_key):
+    """生成二創腳本與標籤"""
     genai.configure(api_key=api_key)
+    # 使用 1.5 Flash 即可，速度快且省額度
     model = genai.GenerativeModel("gemini-1.5-flash")
     
     prompt = f"""
-    Video: {title}
-    Desc: {desc}
-    Task: Generate 10 relevant viral hashtags and 5 SEO keywords for a YouTube Short.
-    Output JSON: {{ "tags": "#Tag1 #Tag2...", "keywords": "Key1, Key2..." }}
+    Video Title: {title}
+    Original Desc: {desc}
+    
+    Task: Create a plan for a "Derivative Work" (二創) of this video for YouTube Shorts.
+    
+    Output JSON ONLY with these fields:
+    {{
+        "new_title": "A catchy Chinese title (繁體中文)",
+        "script": "Detailed visual script for Veo/Kling and voiceover plan (Traditional Chinese)",
+        "tags": "#Tag1 #Tag2 #AI (English/Chinese mix)",
+        "keywords": "Key1, Key2 (For SEO)"
+    }}
     """
     try:
         response = model.generate_content(prompt)
         return json.loads(clean_json_string(response.text))
-    except:
-        return {"tags": "", "keywords": ""}
+    except Exception as e:
+        return {"error": str(e)}
 
 # --- 5. 存檔邏輯 ---
 def save_to_sheet(data, creds_dict):
@@ -103,14 +102,13 @@ def save_to_sheet(data, creds_dict):
         client = gspread.authorize(creds)
         sheet = client.open("Shorts_Content_Planner").sheet1
         
-        # 欄位：時間 | 網址 | 標題 | 關鍵字 | 標籤 | 筆記/腳本
         row = [
             str(datetime.now())[:16],
             data['url'],
             data['title'],
             data['keywords'],
             data['tags'],
-            data['note']
+            data['note'] # 這裡存的就是腳本
         ]
         sheet.append_row(row)
         return True
@@ -119,7 +117,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("🎯 YouTube Shorts 獵手")
+st.title("🎯 Shorts 獵手 (AI 輔助版)")
 keys = get_keys()
 
 if not keys:
@@ -129,97 +127,96 @@ else:
     with st.container():
         c1, c2 = st.columns([3, 1])
         with c1:
-            keyword = st.text_input("🔍 輸入關鍵字 (例如: 貓咪, 紓壓, 甚至特定產品)", value="Oddly Satisfying")
+            keyword = st.text_input("🔍 輸入關鍵字", value="Oddly Satisfying")
         with c2:
-            st.write("") # Spacer
-            st.write("") # Spacer
-            search_btn = st.button("開始搜尋", type="primary")
+            st.write("")
+            st.write("")
+            if st.button("開始搜尋", type="primary"):
+                with st.spinner("搜尋中..."):
+                    results = search_videos(keys['youtube'], keyword)
+                    if results:
+                        st.session_state.search_results = results
+                        st.session_state.selected_video = results[0]
+                        # 重置編輯區的暫存
+                        st.session_state.ai_title = results[0]['title']
+                        st.session_state.ai_script = "" 
+                        st.session_state.ai_tags = ""
+                        st.session_state.ai_keywords = ""
+                    else:
+                        st.warning("找不到影片")
 
-    # 初始化 Session State
-    if 'search_results' not in st.session_state:
-        st.session_state.search_results = []
-    if 'selected_video' not in st.session_state:
-        st.session_state.selected_video = None
-
-    # 執行搜尋
-    if search_btn and keyword:
-        with st.spinner(f"正在尋找關於「{keyword}」的熱門短影音..."):
-            results = search_videos(keys['youtube'], keyword)
-            if results:
-                st.session_state.search_results = results
-                st.session_state.selected_video = results[0] # 預設選第一個
-            else:
-                st.warning("找不到影片，請換個關鍵字試試。")
-
-    # --- 顯示結果區塊 (左邊列表，右邊詳情) ---
-    if st.session_state.search_results:
+    # --- 內容區塊 ---
+    if 'search_results' in st.session_state and st.session_state.search_results:
         st.divider()
         col_list, col_detail = st.columns([1, 2])
 
         # 左側：影片列表
         with col_list:
-            st.subheader("📺 搜尋結果")
+            st.markdown("### 📺 影片列表")
             for vid in st.session_state.search_results:
-                # 每個影片做成一個按鈕，點了就換右邊的內容
-                if st.button(f"▶ {vid['title'][:20]}...", key=vid['id']):
+                # 點擊按鈕切換選中影片
+                if st.button(f"📄 {vid['title'][:15]}...", key=vid['id'], help=vid['title']):
                     st.session_state.selected_video = vid
+                    # 切換影片時，重置輸入框內容為預設值
+                    st.session_state.ai_title = vid['title']
+                    st.session_state.ai_script = ""
+                    st.session_state.ai_tags = ""
+                    st.session_state.ai_keywords = ""
 
-        # 右側：詳細資料與編輯
+        # 右側：編輯詳情
         with col_detail:
-            selected = st.session_state.selected_video
+            selected = st.session_state.get('selected_video')
             if selected:
                 st.subheader("📝 編輯與存檔")
                 
-                # 1. 影片播放器
+                # 顯示影片
                 st.video(selected['url'])
-                st.caption(f"來源頻道: {selected['channel']} | [開啟連結]({selected['url']})")
+                st.caption(f"來源: {selected['channel']} | [開啟連結]({selected['url']})")
 
-                # 2. 編輯表單
-                with st.form("edit_form"):
-                    st.write("### 內容策劃")
-                    
-                    # 標題 (預設填入原標題，可修改)
-                    new_title = st.text_input("影片標題", value=selected['title'])
-                    
-                    c_tag, c_kw = st.columns(2)
-                    with c_tag:
-                        # 這裡留空讓您自己填，或者按下面的 AI 按鈕來填
-                        tags_input = st.text_area("標籤 (Tags)", placeholder="#Tag1 #Tag2...", key="tags_field")
-                    with c_kw:
-                        kw_input = st.text_area("關鍵字 (Keywords)", placeholder="Key1, Key2...", key="kw_field")
-                    
-                    note_input = st.text_area("筆記 / 二創腳本", placeholder="在這裡寫下您的想法或腳本...", height=150)
-                    
-                    # 存檔按鈕
-                    save_submitted = st.form_submit_button("💾 存入 Google Sheet")
-                    
-                    if save_submitted:
-                        data_to_save = {
-                            'url': selected['url'],
-                            'title': new_title,
-                            'keywords': kw_input,
-                            'tags': tags_input,
-                            'note': note_input
-                        }
-                        if save_to_sheet(data_to_save, keys['gcp_json']):
-                            st.success("✅ 資料已儲存！")
-
-                # 3. AI 輔助按鈕 (放在表單外，避免誤觸提交)
                 st.markdown("---")
-                col_ai, _ = st.columns([1, 2])
-                with col_ai:
-                    if st.button("✨ AI 幫我想標籤"):
-                        # 這裡才會消耗 Gemini 額度
-                        try:
-                            # 為了精準，我們再抓一次詳細描述
-                            details = get_video_details(keys['youtube'], selected['id'])
-                            desc = details['description'] if details else ""
+
+                # --- AI 功能區 (按鈕觸發) ---
+                col_ai_btn, _ = st.columns([1, 1])
+                with col_ai_btn:
+                    if st.button("✨ AI 寫二創腳本 & 標籤"):
+                        with st.spinner("AI 正在根據這支影片構思二創內容..."):
+                            ai_data = generate_derivative_content(selected['title'], selected['desc'], keys['gemini'])
                             
-                            with st.spinner("AI 正在分析影片內容..."):
-                                ai_data = generate_tags_and_keywords(selected['title'], desc, keys['gemini'])
-                                
-                                # 用 Toast 顯示結果，並讓使用者複製 (因為 Streamlit 限制，無法直接更新上方表單的值)
-                                st.success("AI 生成完成！請複製下方內容：")
-                                st.code(f"標籤：{ai_data.get('tags')}\n關鍵字：{ai_data.get('keywords')}", language="text")
-                        except Exception as e:
-                            st.error("AI 暫時忙碌，請稍後再試。")
+                            if "error" not in ai_data:
+                                # 更新 Session State，讓下方的輸入框自動填入
+                                st.session_state.ai_title = ai_data.get('new_title', selected['title'])
+                                st.session_state.ai_script = ai_data.get('script', '')
+                                st.session_state.ai_tags = ai_data.get('tags', '')
+                                st.session_state.ai_keywords = ai_data.get('keywords', '')
+                                st.success("AI 生成完畢！已填入下方欄位。")
+                            else:
+                                st.error(f"AI 生成失敗 (可能過快): {ai_data['error']}")
+
+                # --- 編輯表單 (無 Form 包裹，以便即時更新) ---
+                # 使用 session_state 作為 value，這樣 AI 更新後這裡會變
+                
+                new_title = st.text_input("影片標題", value=st.session_state.get('ai_title', selected['title']))
+                
+                c_tag, c_kw = st.columns(2)
+                with c_tag:
+                    tags_input = st.text_area("標籤 (Tags)", value=st.session_state.get('ai_tags', ""))
+                with c_kw:
+                    kw_input = st.text_area("關鍵字 (Keywords)", value=st.session_state.get('ai_keywords', ""))
+                
+                # 腳本區域
+                note_input = st.text_area("二創腳本 / 筆記 (可手動修改)", value=st.session_state.get('ai_script', ""), height=200)
+                
+                st.markdown("---")
+                
+                # 存檔按鈕
+                if st.button("💾 存入 Google Sheet", type="primary"):
+                    data_to_save = {
+                        'url': selected['url'],
+                        'title': new_title,
+                        'keywords': kw_input,
+                        'tags': tags_input,
+                        'note': note_input
+                    }
+                    with st.spinner("存檔中..."):
+                        if save_to_sheet(data_to_save, keys['gcp_json']):
+                            st.success("✅ 資料已成功儲存！")
