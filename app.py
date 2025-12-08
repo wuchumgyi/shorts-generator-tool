@@ -8,7 +8,7 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 獵手 (試算表對應版)", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Shorts 獵手 (流暢二創版)", page_icon="🎨", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
@@ -90,34 +90,31 @@ def search_videos(api_key, keyword, max_results=10):
         st.error(f"搜尋失敗: {e}")
         return []
 
-# --- 5. AI 生成 (針對您的試算表格式優化) ---
-def generate_content_for_sheet(title, desc, api_key, model_name):
+# --- 5. AI 生成 (針對「流暢二創」優化的指令) ---
+def generate_creative_content(title, desc, api_key, model_name):
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name)
     
-    # ⚠️ Prompt 重點：
-    # 1. 產生 Veo 和 Kling 兩種 Prompt
-    # 2. 標題、腳本都要有中英文對照
-    # 3. 標籤和留言強制英文
     prompt = f"""
-    Video: {title}
-    Desc: {desc}
-    Task: Plan a "Derivative Work" (二創) for YouTube Shorts.
+    Source Video Title: {title}
+    Source Description: {desc}
     
-    REQUIREMENTS:
-    1. 'veo_prompt' & 'kling_prompt': English ONLY. High detail.
-    2. 'title_en', 'script_en', 'tags', 'comment': English ONLY.
-    3. 'title_zh', 'script_zh': Traditional Chinese (繁體中文).
-    4. Tags MUST include #AI.
+    Task: Create a plan for a NEW, ORIGINAL 9-second YouTube Short inspired by this source (Derivative Work/二創).
+    
+    CRITICAL INSTRUCTIONS:
+    1. **NO Timecodes:** The script MUST be a single, continuous paragraph describing the flow of the 9-second video. Do NOT use "00:01", "Scene 1", etc. It must read like a smooth story.
+    2. **Be Creative & Original:** Do NOT just copy the source video. Extract the "satisfying element" (e.g., cutting, flowing, crushing) but CHANGE the object, material, or setting. Make it a unique new creation.
+    3. **Language:** - 'veo_prompt', 'kling_prompt', 'script_en', 'tags', 'comment': English ONLY.
+       - 'title_zh', 'script_zh': Traditional Chinese (繁體中文).
     
     Output JSON ONLY:
     {{
         "title_en": "Catchy English Title",
-        "title_zh": "吸睛中文標題",
-        "veo_prompt": "Prompt for Google Veo (English)",
-        "kling_prompt": "Prompt for Kling AI (English)",
-        "script_en": "Visual script description (English)",
-        "script_zh": "畫面分鏡描述 (繁體中文)",
+        "title_zh": "吸睛中文標題 (繁體中文)",
+        "veo_prompt": "Highly detailed English prompt for AI video generation (continuous shot, smooth motion)",
+        "kling_prompt": "Highly detailed English prompt for Kling AI (8k, photorealistic, cinematic lighting)",
+        "script_en": "A smooth, continuous paragraph describing the 9-second visual flow (No timecodes, English)",
+        "script_zh": "一段流暢的9秒畫面描述，不要分秒數，像在講一個連貫的畫面 (繁體中文)",
         "tags": "#Tag1 #Tag2 #AI (English Only)",
         "comment": "Engaging first comment (English Only)"
     }}
@@ -128,7 +125,7 @@ def generate_content_for_sheet(title, desc, api_key, model_name):
     except Exception as e:
         return {"error": str(e)}
 
-# --- 6. 存檔 (對應 10 個欄位) ---
+# --- 6. 存檔 ---
 def save_to_sheet(data, creds_dict):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -136,19 +133,17 @@ def save_to_sheet(data, creds_dict):
         client = gspread.authorize(creds)
         sheet = client.open("Shorts_Content_Planner").sheet1
         
-        # 依照您提供的圖片 (image_057615.png) 順序排列：
-        # A: 時間, B: 網址, C: 英文標題, D: 中文標題, E: Veo, F: Kling, G: 英文腳本, H: 中文腳本, I: 英文標籤, J: 英文留言
         row = [
-            str(datetime.now())[:16],   # A: 時間
-            data['url'],                # B: 來源網址
-            data['title_en'],           # C: 英文標題
-            data['title_zh'],           # D: 中文標題
-            data['veo_prompt'],         # E: Veo Prompt
-            data['kling_prompt'],       # F: Kling Prompt
-            data['script_en'],          # G: 英文腳本
-            data['script_zh'],          # H: 中文腳本
-            data['tags'],               # I: 英文標籤
-            data['comment']             # J: 英文留言
+            str(datetime.now())[:16],
+            data['url'],
+            data['title_en'],
+            data['title_zh'],
+            data['veo_prompt'],
+            data['kling_prompt'],
+            data['script_en'],
+            data['script_zh'],
+            data['tags'],
+            data['comment']
         ]
         sheet.append_row(row)
         return True
@@ -157,7 +152,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("🎯 Shorts 獵手 (試算表對應版)")
+st.title("🎨 Shorts 獵手 (流暢二創版)")
 
 if not keys["gemini"]:
     st.warning("⚠️ 請檢查 Secrets 設定")
@@ -192,6 +187,9 @@ else:
             for vid in st.session_state.search_results:
                 if st.button(f"📄 {vid['title'][:15]}...", key=vid['id']):
                     st.session_state.selected_video = vid
+                    # 切換時清空 AI 暫存，避免混淆
+                    for key in ['ai_title_en', 'ai_title_zh', 'ai_script_en', 'ai_script_zh', 'ai_tags', 'ai_comment', 'ai_veo', 'ai_kling']:
+                        if key in st.session_state: del st.session_state[key]
                     st.rerun()
 
         with col_detail:
@@ -205,18 +203,18 @@ else:
                 # AI 按鈕
                 col_btn, _ = st.columns([1, 1])
                 with col_btn:
-                    if st.button("✨ AI 生成全套資料 (自動存檔)"):
+                    if st.button("✨ AI 生成二創腳本 (自動存檔)"):
                         if not selected_model_name:
                             st.error("請先選擇 AI 模型")
                         else:
-                            with st.spinner(f"AI ({selected_model_name}) 正在生成並寫入..."):
-                                ai_data = generate_content_for_sheet(
+                            with st.spinner(f"AI ({selected_model_name}) 正在構思二創腳本..."):
+                                ai_data = generate_creative_content(
                                     selected['title'], selected['desc'], 
                                     keys['gemini'], selected_model_name
                                 )
                                 
                                 if "error" not in ai_data:
-                                    # 1. 存入 Session State 以便顯示
+                                    # 1. 存入 Session State
                                     st.session_state.ai_title_en = ai_data.get('title_en', '')
                                     st.session_state.ai_title_zh = ai_data.get('title_zh', '')
                                     st.session_state.ai_veo = ai_data.get('veo_prompt', '')
@@ -239,22 +237,22 @@ else:
                                         'comment': ai_data.get('comment', '')
                                     }
                                     if save_to_sheet(data_to_save, keys['gcp_json']):
-                                        st.success("✅ 成功！資料已寫入 Google Sheet！")
+                                        st.success("✅ 成功！原創腳本已生成並存檔！")
                                         st.rerun()
                                 else:
                                     st.error(f"生成失敗: {ai_data['error']}")
 
-                # 顯示結果 (使用 expander 收納，讓畫面乾淨)
+                # 顯示結果
                 if 'ai_title_en' in st.session_state:
-                    with st.expander("👀 查看生成內容 (可手動修改後再次存檔)", expanded=True):
+                    with st.expander("👀 查看/修改 生成內容", expanded=True):
                         c1, c2 = st.columns(2)
                         with c1:
                             t_en = st.text_input("英文標題", key="ai_title_en")
-                            s_en = st.text_area("英文腳本", key="ai_script_en")
+                            s_en = st.text_area("英文腳本 (無分鏡)", key="ai_script_en", height=150)
                             veo = st.text_area("Veo Prompt", key="ai_veo")
                         with c2:
                             t_zh = st.text_input("中文標題", key="ai_title_zh")
-                            s_zh = st.text_area("中文腳本", key="ai_script_zh")
+                            s_zh = st.text_area("中文腳本 (流暢敘述)", key="ai_script_zh", height=150)
                             kling = st.text_area("Kling Prompt", key="ai_kling")
                         
                         tags = st.text_area("英文標籤", key="ai_tags")
@@ -269,4 +267,4 @@ else:
                                 'tags': tags, 'comment': comm
                             }
                             if save_to_sheet(data, keys['gcp_json']):
-                                st.success("✅ 更新成功！")
+                                st.success("✅ 資料已更新！")
