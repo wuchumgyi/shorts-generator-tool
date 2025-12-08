@@ -10,7 +10,7 @@ import random
 import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 自動化 (支援最新版)", page_icon="🚀", layout="centered")
+st.set_page_config(page_title="Shorts 生成器 (省流量版)", page_icon="⚡", layout="centered")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 20px; font-weight: bold;}
@@ -50,7 +50,6 @@ def clean_json_string(text):
 def search_trending_video(api_key):
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
-        # 搜尋高畫質、舒壓類型的 Shorts
         search_response = youtube.search().list(
             q="Satisfying 4k Shorts",
             type="video",
@@ -85,46 +84,45 @@ def get_video_info(video_id, api_key):
         st.error(f"YouTube 錯誤: {e}")
         return None
 
-# --- 4. AI 生成邏輯 (自動偵測最強版本) ---
-def get_best_available_model(api_key):
+# --- 4. AI 生成邏輯 (加上快取，大幅減少 API 呼叫) ---
+
+# 🔥 關鍵修改：加上 @st.cache_resource
+# 這會讓 Streamlit 記住結果，不會每次刷新頁面都去問 Google，節省大量額度
+@st.cache_resource(ttl=3600) 
+def get_best_available_model(_api_key_wrapper):
     """
     自動測試並回傳當前 API Key 能用的「最高級」模型。
-    順序：3.0 -> 2.0 -> 1.5
+    結果會被快取 1 小時 (ttl=3600)。
     """
+    api_key = _api_key_wrapper['key'] # 解包
     genai.configure(api_key=api_key)
     
-    # 我們想要嘗試的候選名單 (優先度由高到低)
-    # 這裡包含了未來可能的命名規則
     candidates = [
-        "gemini-3.0-pro", 
-        "gemini-3.0-flash", 
         "gemini-2.0-flash-exp", 
         "gemini-1.5-pro", 
         "gemini-1.5-flash"
     ]
     
-    # 1. 先列出帳號內所有可用模型
+    # 嘗試列出模型 (這個動作很耗額度，所以必須快取)
     available_models = []
     try:
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 available_models.append(m.name.replace("models/", ""))
     except:
-        return "gemini-1.5-flash" # 如果連列表都抓不到，直接回傳保底
+        return "gemini-1.5-flash" # 保底
 
-    # 2. 比對候選名單
     for candidate in candidates:
         if candidate in available_models:
             return candidate
             
-    # 3. 如果候選名單都沒中，回傳 1.5 flash 保底
     return "gemini-1.5-flash"
 
 def generate_script_smart(video_data, api_key):
     genai.configure(api_key=api_key)
     
-    # 🔥 自動抓取最強模型
-    target_model = get_best_available_model(api_key)
+    # 使用包裝器傳遞 key 以配合 cache
+    target_model = get_best_available_model({'key': api_key})
     
     prompt = f"""
     Video Title: {video_data['title']}
@@ -132,17 +130,17 @@ def generate_script_smart(video_data, api_key):
     
     Task: Create a high-quality, viral 9-second Short plan.
     
-    CRITICAL VISUAL INSTRUCTIONS (To fix "Abrupt" transitions):
+    CRITICAL VISUAL INSTRUCTIONS:
     1. The 'veo_prompt' MUST describe a CONTINUOUS ACTION (One-shot).
-    2. Focus on the PROCESS. Use words like "gradual transformation", "flowing", "slowly revealing".
-    3. DO NOT use "Before" and "After" logic. Describe the boundary moving.
+    2. Focus on the PROCESS (morphing, flowing).
+    3. DO NOT use "Before" and "After" logic.
     
     DATA REQUIREMENTS:
     1. 'veo_prompt': Optimized for Google Veo (Smooth motion, photorealistic, 4k).
-    2. 'kling_prompt': Optimized for Kling AI (Keywords: "8k, raw style, best quality, highly detailed, cinema lighting").
-    3. 'script_en', 'tags', 'comment' MUST be in ENGLISH.
-    4. 'script_zh', 'title_zh' MUST be in TRADITIONAL CHINESE (繁體中文).
-    5. 'tags' MUST include #AI. NO tool names (#Veo, #Kling, #Sora).
+    2. 'kling_prompt': Optimized for Kling AI (Keywords: "8k, raw style, best quality, cinema lighting").
+    3. 'script_en', 'tags', 'comment' in ENGLISH.
+    4. 'script_zh', 'title_zh' in TRADITIONAL CHINESE.
+    5. 'tags' MUST include #AI. NO tool names.
     
     Output JSON ONLY:
     {{
@@ -159,8 +157,7 @@ def generate_script_smart(video_data, api_key):
     
     st.markdown(f"""
     <div class="info-box">
-    <b>🤖 正在使用模型：{target_model}</b><br>
-    系統已自動為您挑選當前可用的最新版本。
+    <b>🤖 正在使用模型：{target_model}</b>
     </div>
     """, unsafe_allow_html=True)
 
@@ -230,7 +227,7 @@ def save_to_sheet_auto(data, creds_dict, ref_url):
         return False
 
 # --- 主介面 ---
-st.title("🚀 Shorts 生成器 (未來兼容版)")
+st.title("⚡ Shorts 生成器 (快取省流版)")
 keys = get_keys()
 
 if not keys:
@@ -262,7 +259,7 @@ else:
                     v_info = get_video_info(vid, keys['youtube'])
                 
                 if v_info:
-                    with st.spinner("2/3 AI 正在撰寫 (自動選擇最強模型)..."):
+                    with st.spinner("2/3 AI 正在撰寫 (使用快取優化)..."):
                         result = generate_script_smart(v_info, keys['gemini'])
                     
                     if result:
