@@ -6,11 +6,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import json
 import re
-import random
-import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 獵手 (AI 輔助版)", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Shorts 獵手 (穩定版)", page_icon="🎯", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
@@ -83,7 +81,7 @@ def generate_derivative_content(title, desc, api_key):
     Output JSON ONLY with these fields:
     {{
         "new_title": "A catchy Chinese title (繁體中文)",
-        "script": "Detailed visual script for Veo/Kling and voiceover plan (Traditional Chinese)",
+        "script": "Detailed visual script for Veo/Kling (Traditional Chinese)",
         "tags": "#Tag1 #Tag2 #AI (English/Chinese mix)",
         "keywords": "Key1, Key2 (For SEO)"
     }}
@@ -102,13 +100,14 @@ def save_to_sheet(data, creds_dict):
         client = gspread.authorize(creds)
         sheet = client.open("Shorts_Content_Planner").sheet1
         
+        # 欄位順序：時間 | 網址 | 標題 | 關鍵字 | 標籤 | 腳本筆記
         row = [
             str(datetime.now())[:16],
             data['url'],
             data['title'],
             data['keywords'],
             data['tags'],
-            data['note'] # 這裡存的就是腳本
+            data['note']
         ]
         sheet.append_row(row)
         return True
@@ -137,9 +136,9 @@ else:
                     if results:
                         st.session_state.search_results = results
                         st.session_state.selected_video = results[0]
-                        # 重置編輯區的暫存
+                        # 重置暫存
                         st.session_state.ai_title = results[0]['title']
-                        st.session_state.ai_script = "" 
+                        st.session_state.ai_script = ""
                         st.session_state.ai_tags = ""
                         st.session_state.ai_keywords = ""
                     else:
@@ -155,13 +154,14 @@ else:
             st.markdown("### 📺 影片列表")
             for vid in st.session_state.search_results:
                 # 點擊按鈕切換選中影片
-                if st.button(f"📄 {vid['title'][:15]}...", key=vid['id'], help=vid['title']):
+                if st.button(f"📄 {vid['title'][:15]}...", key=vid['id']):
                     st.session_state.selected_video = vid
-                    # 切換影片時，重置輸入框內容為預設值
+                    # 切換時重置，避免殘留上一部的資料
                     st.session_state.ai_title = vid['title']
                     st.session_state.ai_script = ""
                     st.session_state.ai_tags = ""
                     st.session_state.ai_keywords = ""
+                    st.rerun() # 強制刷新畫面
 
         # 右側：編輯詳情
         with col_detail:
@@ -178,33 +178,34 @@ else:
                 # --- AI 功能區 (按鈕觸發) ---
                 col_ai_btn, _ = st.columns([1, 1])
                 with col_ai_btn:
-                    if st.button("✨ AI 寫二創腳本 & 標籤"):
-                        with st.spinner("AI 正在根據這支影片構思二創內容..."):
+                    if st.button("✨ AI 幫我寫二創腳本"):
+                        with st.spinner("AI 正在思考中 (消耗 1 次額度)..."):
                             ai_data = generate_derivative_content(selected['title'], selected['desc'], keys['gemini'])
                             
                             if "error" not in ai_data:
-                                # 更新 Session State，讓下方的輸入框自動填入
+                                # 更新 Session State
                                 st.session_state.ai_title = ai_data.get('new_title', selected['title'])
                                 st.session_state.ai_script = ai_data.get('script', '')
                                 st.session_state.ai_tags = ai_data.get('tags', '')
                                 st.session_state.ai_keywords = ai_data.get('keywords', '')
-                                st.success("AI 生成完畢！已填入下方欄位。")
+                                st.success("AI 生成完畢！")
+                                st.rerun() # 刷新頁面以顯示填入的內容
                             else:
-                                st.error(f"AI 生成失敗 (可能過快): {ai_data['error']}")
+                                st.error(f"AI 生成失敗: {ai_data['error']}")
 
-                # --- 編輯表單 (無 Form 包裹，以便即時更新) ---
-                # 使用 session_state 作為 value，這樣 AI 更新後這裡會變
+                # --- 編輯表單 ---
+                # 使用 text_input 的 key 綁定 session_state，實現自動填入
                 
-                new_title = st.text_input("影片標題", value=st.session_state.get('ai_title', selected['title']))
+                new_title = st.text_input("影片標題", key="ai_title")
                 
                 c_tag, c_kw = st.columns(2)
                 with c_tag:
-                    tags_input = st.text_area("標籤 (Tags)", value=st.session_state.get('ai_tags', ""))
+                    tags_input = st.text_area("標籤 (Tags)", key="ai_tags")
                 with c_kw:
-                    kw_input = st.text_area("關鍵字 (Keywords)", value=st.session_state.get('ai_keywords', ""))
+                    kw_input = st.text_area("關鍵字 (Keywords)", key="ai_keywords")
                 
                 # 腳本區域
-                note_input = st.text_area("二創腳本 / 筆記 (可手動修改)", value=st.session_state.get('ai_script', ""), height=200)
+                note_input = st.text_area("二創腳本 / 筆記", key="ai_script", height=200)
                 
                 st.markdown("---")
                 
