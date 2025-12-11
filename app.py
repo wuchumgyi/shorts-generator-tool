@@ -8,18 +8,20 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 流量獵手 (AI 導演版)", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="Shorts 流量獵手 (Pro計算版)", page_icon="💰", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
     .video-card {background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid #ff0000;}
     .stat-box {font-size: 0.8em; color: #555; background: #e0e0e0; padding: 2px 6px; border-radius: 4px; margin-right: 5px;}
+    .cost-box {background-color: #d1e7dd; color: #0f5132; padding: 10px; border-radius: 5px; border: 1px solid #badbcc; margin-bottom: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
 # --- 1. 初始化與讀取 Key ---
 def get_keys():
     return {
+        # 請確保 secrets.toml 裡的 key 名稱一致
         "gemini": st.secrets.get("GEMINI_API_KEY"),
         "youtube": st.secrets.get("YOUTUBE_API_KEY"),
         "gcp_json": dict(st.secrets["gcp_service_account"]) if "gcp_service_account" in st.secrets else None
@@ -27,7 +29,7 @@ def get_keys():
 
 keys = get_keys()
 
-# --- 2. 獲取可用模型 ---
+# --- 2. 獲取可用模型 (會自動抓取 3.0 Pro) ---
 @st.cache_resource
 def get_valid_models(api_key):
     if not api_key: return []
@@ -39,7 +41,7 @@ def get_valid_models(api_key):
                 valid_models.append(m.name)
     except:
         pass
-    # 預設排序，讓 Pro 或 Flash 排前面方便選擇
+    # 排序：讓 Pro 或 Latest 排在前面
     return sorted(valid_models, reverse=True)
 
 # --- 3. 核心工具 ---
@@ -58,10 +60,6 @@ def extract_video_id(input_str):
 
 # --- 4. YouTube 搜尋 (流量獵手邏輯) ---
 def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
-    """
-    days_filter: 限制搜尋最近 N 天內的影片
-    邏輯：依發布時間過濾 -> 依觀看數排序 (由高到低)
-    """
     try:
         youtube = build('youtube', 'v3', developerKey=api_key)
         videos = []
@@ -69,14 +67,13 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
         direct_vid = extract_video_id(query)
         
         if direct_vid:
-            # === 模式一：指定影片 (Direct) ===
+            # === 模式一：指定影片 ===
             response = youtube.videos().list(
                 part="snippet,statistics", id=direct_vid
             ).execute()
             items = response.get("items", [])
         else:
-            # === 模式二：病毒式搜尋 (Viral Search) ===
-            # 計算 RFC 3339 格式的時間 (例如：2023-10-01T00:00:00Z)
+            # === 模式二：病毒式搜尋 ===
             published_after = (datetime.utcnow() - timedelta(days=days_filter)).isoformat("T") + "Z"
             
             search_response = youtube.search().list(
@@ -84,12 +81,11 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
                 type="video", 
                 part="id,snippet",
                 maxResults=max_results, 
-                order="viewCount",      # 關鍵：按觀看數排序
-                videoDuration="short",  # 關鍵：只抓 Shorts
-                publishedAfter=published_after # 關鍵：只抓近期的
+                order="viewCount",      # 按觀看數排序
+                videoDuration="short",  # 只抓 Shorts
+                publishedAfter=published_after # 只抓近期
             ).execute()
             
-            # 搜尋結果只有 id，需要再一次 request 拿統計數據 (觀看數)
             video_ids = [item['id']['videoId'] for item in search_response.get("items", [])]
             if not video_ids: return []
             
@@ -99,7 +95,7 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
             ).execute()
             items = response.get("items", [])
             
-            # 再次確保按觀看數排序 (API 有時會混亂)
+            # 二次排序
             items.sort(key=lambda x: int(x['statistics'].get('viewCount', 0)), reverse=True)
 
         for item in items:
@@ -107,7 +103,6 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
             stats = item.get('statistics', {})
             view_count = int(stats.get('viewCount', 0))
             
-            # 格式化觀看數 (例如 1.2M)
             if view_count > 1000000:
                 view_str = f"{view_count/1000000:.1f}M views"
             elif view_count > 1000:
@@ -115,7 +110,7 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
             else:
                 view_str = f"{view_count} views"
             
-            pub_date = item['snippet']['publishedAt'][:10] # 取出 YYYY-MM-DD
+            pub_date = item['snippet']['publishedAt'][:10]
 
             videos.append({
                 'id': vid,
@@ -134,12 +129,11 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
         st.error(f"YouTube API 錯誤: {e}")
         return []
 
-# --- 5. AI 生成 (導演級 Prompt) ---
+# --- 5. AI 生成 (含 Token 計算功能) ---
 def generate_creative_content(title, desc, api_key, model_name):
     genai.configure(api_key=api_key)
-    # 設定參數以增加創造力
     generation_config = genai.types.GenerationConfig(
-        temperature=0.85, # 提高創造性
+        temperature=0.85,
         top_p=0.95,
         top_k=40
     )
@@ -156,42 +150,38 @@ def generate_creative_content(title, desc, api_key, model_name):
     Create a plan for a NEW, DERIVATIVE 9-12 second video. Do NOT just copy the original. Extract the "Satisfying Element" or "Core Humor" and reimagine it with higher quality visuals.
     
     REQUIREMENTS:
-    
-    1. **VEO PROMPT (Cinematic Focus):**
-       - Veo excels at: 1080p+, Continuous shots, Cinematic Lighting, Drone flyovers, Slow-motion.
-       - Structure: [Medium/Style], [Subject], [Action], [Lighting/Atmosphere], [Camera Movement], [Technical Specs].
-       - Example: "Cinematic 4k shot, drone view, a golden retriever running through a field of lavender during golden hour, soft volumetric lighting, slow motion 60fps, highly detailed fur."
-       
-    2. **KLING PROMPT (Physics & Motion Focus):**
-       - Kling excels at: Realistic human motion, fluid dynamics, complex interactions.
-       - Structure: [Subject], [Detailed Action], [Environment], [Style].
-       - Example: "A cyberpunk chef chopping neon vegetables, sparks flying, realistic physics, 8k resolution, cyberpunk city background, detailed textures."
-       
-    3. **SEO TAGS (Exposure Strategy):**
-       - Mix 3 types of tags: 
-         (A) Broad Niche (e.g., #Satisfying, #Funny)
-         (B) Specific Content (e.g., #HydraulicPress, #CuteCat)
-         (C) Trending/AI (e.g., #AIArt, #Veo, #ShortsTrend)
-       - Provide 15-20 high-traffic tags.
-       
-    4. **SCRIPTS:**
-       - Write a visual flow (not dialogue heavy). Focus on what we SEE.
+    1. **VEO PROMPT (Cinematic Focus):** Focus on lighting, camera movement, and technical specs (4k, 60fps).
+    2. **KLING PROMPT (Physics Focus):** Focus on realistic motion, fluid dynamics, and textures.
+    3. **SEO TAGS:** Provide 15-20 mixed tags (Broad + Specific + Trending).
+    4. **SCRIPTS:** Visual-heavy description.
     
     OUTPUT JSON ONLY:
     {{
-        "title_en": "Clickbait-style English Title (Short & Punchy)",
-        "title_zh": "繁體中文標題 (帶有情緒、懸念或驚嘆)",
-        "veo_prompt": "English prompt optimized for VEO (Cinematic/Camera focus)",
-        "kling_prompt": "English prompt optimized for KLING (Motion/Physics focus)",
-        "script_en": "Visual description of the new video flow",
-        "script_zh": "繁體中文畫面描述 (強調視覺衝擊)",
-        "tags": "#Tag1 #Tag2 ... (Optimized list)",
-        "comment": "A strategic first comment to pin (engaging question)"
+        "title_en": "Clickbait-style English Title",
+        "title_zh": "繁體中文標題 (帶有情緒)",
+        "veo_prompt": "English prompt for VEO",
+        "kling_prompt": "English prompt for KLING",
+        "script_en": "Visual description (English)",
+        "script_zh": "繁體中文畫面描述",
+        "tags": "#Tag1 #Tag2 ...",
+        "comment": "Engaging first comment"
     }}
     """
     try:
         response = model.generate_content(prompt)
-        return json.loads(clean_json_string(response.text))
+        
+        # === 關鍵修改：抓取 Token 用量 ===
+        usage = response.usage_metadata
+        token_info = {
+            "input": usage.prompt_token_count,
+            "output": usage.candidates_token_count,
+            "total": usage.total_token_count
+        }
+        
+        result = json.loads(clean_json_string(response.text))
+        result['token_usage'] = token_info # 將用量塞入回傳資料
+        return result
+        
     except Exception as e:
         return {"error": str(e)}
 
@@ -201,7 +191,6 @@ def save_to_sheet(data, creds_dict):
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 確保您的 Google Sheet 名稱正確
         sheet = client.open("Shorts_Content_Planner").sheet1
         
         row = [
@@ -223,8 +212,8 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("🎬 Shorts 流量獵手 (AI 導演版)")
-st.caption("專為 Veo/Kling 生成設計 · 鎖定近期爆紅影片")
+st.title("💰 Shorts 流量獵手 (AI 導演 x 成本監控版)")
+st.caption("專為 Veo/Kling 生成設計 · 支援 3.0 Pro 計費顯示")
 
 if not keys["gemini"]:
     st.warning("⚠️ 請檢查 Secrets 設定 (GEMINI_API_KEY)")
@@ -233,7 +222,7 @@ else:
     with st.container():
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
-            query_input = st.text_input("🔍 輸入關鍵字 (例如: satisfying, funny cat, diy hacks)", value="oddly satisfying")
+            query_input = st.text_input("🔍 輸入關鍵字", value="oddly satisfying")
         with c2:
             days_opt = st.selectbox("📅 搜尋範圍", [7, 14, 30, 90], index=1, format_func=lambda x: f"最近 {x} 天")
         with c3:
@@ -245,24 +234,22 @@ else:
                     if results:
                         st.session_state.search_results = results
                         st.session_state.selected_video = results[0]
-                        # 清空舊的生成暫存
-                        keys_to_clear = ['ai_title_en', 'ai_title_zh', 'ai_script_en', 'ai_script_zh', 'ai_tags', 'ai_comment', 'ai_veo', 'ai_kling']
-                        for k in keys_to_clear:
-                            if k in st.session_state: del st.session_state[k]
+                        # 清空舊生成
+                        for k in list(st.session_state.keys()):
+                            if k.startswith('ai_'): del st.session_state[k]
                     else:
-                        st.warning("⚠️ 找不到符合條件的影片。試試看放寬日期限制？")
+                        st.warning("⚠️ 找不到符合條件的影片。")
 
     # 內容區塊
     if 'search_results' in st.session_state and st.session_state.search_results:
         st.divider()
         col_list, col_detail = st.columns([1.5, 2])
 
-        # 左側列表 (增強顯示觀看數與日期)
+        # 左側列表
         with col_list:
             st.markdown(f"### 🔥 熱門影片列表")
             for vid in st.session_state.search_results:
                 with st.container():
-                    # 判斷是否為「超級爆款」 (例如 14天內超過 50萬觀看)
                     is_viral = vid['raw_views'] > 500000
                     viral_badge = "🔥 " if is_viral else ""
                     
@@ -270,15 +257,12 @@ else:
                     st.markdown(f"""
                     <span class='stat-box'>👁️ {vid['views']}</span>
                     <span class='stat-box'>📅 {vid['date']}</span>
-                    <span class='stat-box'>👤 {vid['channel']}</span>
                     """, unsafe_allow_html=True)
                     
                     if st.button(f"👉 選擇此影片", key=vid['id']):
                         st.session_state.selected_video = vid
-                        # 清空暫存
-                        keys_to_clear = ['ai_title_en', 'ai_title_zh', 'ai_script_en', 'ai_script_zh', 'ai_tags', 'ai_comment', 'ai_veo', 'ai_kling']
-                        for k in keys_to_clear:
-                            if k in st.session_state: del st.session_state[k]
+                        for k in list(st.session_state.keys()):
+                            if k.startswith('ai_'): del st.session_state[k]
                         st.rerun()
                     st.divider()
 
@@ -289,73 +273,62 @@ else:
                 st.info(f"✅ 當前分析：{selected['title']}")
                 st.video(selected['url'])
                 
-                # 模型選擇區域
+                # 模型選擇
                 if keys["gemini"]:
                     model_options = get_valid_models(keys["gemini"])
-                    selected_model_name = st.selectbox("🤖 選擇 AI 模型 (建議選 Pro 或 Latest)", model_options)
+                    selected_model_name = st.selectbox("🤖 選擇 AI 模型 (請選 3.0 Pro 或 2.0 Flash)", model_options)
                 
                 if st.button("✨ 生成 Veo/Kling 專用腳本 (自動存檔)", type="primary"):
                     if not selected_model_name:
                         st.error("請檢查 AI 模型設定")
                     else:
-                        with st.spinner(f"AI ({selected_model_name}) 正在撰寫分鏡與 Prompt..."):
+                        with st.spinner(f"AI ({selected_model_name}) 正在運算中..."):
                             ai_data = generate_creative_content(
                                 selected['title'], selected['desc'], 
                                 keys['gemini'], selected_model_name
                             )
                             
                             if "error" not in ai_data:
-                                # 更新 Session State
+                                # 儲存至 Session State
+                                st.session_state.ai_data_full = ai_data # 存完整資料含 token
                                 st.session_state.ai_title_en = ai_data.get('title_en', '')
                                 st.session_state.ai_title_zh = ai_data.get('title_zh', '')
                                 st.session_state.ai_veo = ai_data.get('veo_prompt', '')
                                 st.session_state.ai_kling = ai_data.get('kling_prompt', '')
-                                st.session_state.ai_script_en = ai_data.get('script_en', '')
                                 st.session_state.ai_script_zh = ai_data.get('script_zh', '')
                                 st.session_state.ai_tags = ai_data.get('tags', '')
-                                st.session_state.ai_comment = ai_data.get('comment', '')
                                 
                                 # 自動存檔
-                                data_to_save = {
-                                    'url': selected['url'],
-                                    'title_en': ai_data.get('title_en', ''),
-                                    'title_zh': ai_data.get('title_zh', ''),
-                                    'veo_prompt': ai_data.get('veo_prompt', ''),
-                                    'kling_prompt': ai_data.get('kling_prompt', ''),
-                                    'script_en': ai_data.get('script_en', ''),
-                                    'script_zh': ai_data.get('script_zh', ''),
-                                    'tags': ai_data.get('tags', ''),
-                                    'comment': ai_data.get('comment', '')
-                                }
-                                if save_to_sheet(data_to_save, keys['gcp_json']):
-                                    st.toast("✅ 資料已自動儲存至 Google Sheets!", icon="💾")
-                                else:
-                                    st.error("存檔失敗，請檢查 GCP 設定")
+                                if save_to_sheet(ai_data, keys['gcp_json']):
+                                    st.toast("✅ 資料已存至 Google Sheets!", icon="💾")
                             else:
                                 st.error(f"生成失敗: {ai_data['error']}")
 
-                # 顯示生成結果
-                if 'ai_veo' in st.session_state:
-                    st.subheader("🎨 影片生成 Prompts")
-                    t1, t2 = st.tabs(["🎥 Google Veo", "⚡ Kling AI"])
+                # 顯示生成結果與費用
+                if 'ai_data_full' in st.session_state:
+                    data = st.session_state.ai_data_full
                     
-                    with t1:
-                        st.text_area("Veo Prompt (複製到 Veo)", key="ai_veo", height=120)
-                        st.caption("特點：電影感、運鏡流暢、高解析度")
-                    
-                    with t2:
-                        st.text_area("Kling Prompt (複製到 Kling)", key="ai_kling", height=120)
-                        st.caption("特點：動作擬真、物理效果好")
+                    # === 💰 費用顯示區塊 ===
+                    if 'token_usage' in data:
+                        u = data['token_usage']
+                        # 3.0 Pro 費率計算 (Input $2, Output $12 / 1M tokens)
+                        cost_usd = (u['input']/1000000 * 2.0) + (u['output']/1000000 * 12.0)
+                        cost_twd = cost_usd * 32.5 # 假設匯率
+                        
+                        st.markdown(f"""
+                        <div class="cost-box">
+                            <b>💰 本次生成成本 (以 Gemini 3.0 Pro 費率估算):</b><br>
+                            輸入 Tokens: {u['input']} | 輸出 Tokens: {u['output']} | 總計: {u['total']}<br>
+                            <b>預估費用: {cost_twd:.4f} TWD</b> (USD ${cost_usd:.5f})
+                        </div>
+                        """, unsafe_allow_html=True)
+                    # =========================
 
-                    st.subheader("📝 影片資訊")
-                    c_title, c_tags = st.columns(2)
-                    with c_title:
-                        st.text_input("中文標題", key="ai_title_zh")
-                    with c_tags:
-                        st.text_area("SEO 標籤", key="ai_tags", height=68)
-                    
-                    st.text_area("腳本描述", key="ai_script_zh", height=100)
-                    
-                    if st.button("💾 更新修改後的內容"):
-                        # 這裡放更新邏輯 (同樣呼叫 save_to_sheet，但這只是範例，通常會 append 新的一行或 update)
-                        st.toast("修改已記錄 (實際專案需實作 Update 邏輯)", icon="✅")
+                    st.subheader("🎨 生成內容")
+                    t1, t2 = st.tabs(["🎥 Google Veo Prompt", "⚡ Kling AI Prompt"])
+                    with t1: st.text_area("Veo", key="ai_veo", height=100)
+                    with t2: st.text_area("Kling", key="ai_kling", height=100)
+
+                    st.text_input("中文標題", key="ai_title_zh")
+                    st.text_area("腳本描述", key="ai_script_zh", height=120)
+                    st.text_area("SEO 標籤", key="ai_tags", height=60)
