@@ -8,7 +8,7 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 流量獵手 (Veo專用版)", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="Shorts 流量獵手 (Veo專家版)", page_icon="🎬", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
@@ -103,33 +103,42 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
         st.error(f"YouTube API 錯誤: {e}")
         return []
 
-# --- 5. AI 生成 (省錢版：移除 Kling) ---
+# --- 5. AI 生成 (Veo 專家級 Prompt 核心) ---
 def generate_creative_content(title, desc, api_key, model_name):
     genai.configure(api_key=api_key)
-    generation_config = genai.types.GenerationConfig(temperature=0.85, top_p=0.95, top_k=40)
+    # 稍微調低 temperature 讓指令更精確，不要太發散
+    generation_config = genai.types.GenerationConfig(temperature=0.75, top_p=0.95, top_k=40)
     model = genai.GenerativeModel(model_name, generation_config=generation_config)
     
-    # === 修改點：Prompt 中移除了 Kling 的要求，只專注於 Veo ===
+    # === 專家級 Veo 指令結構 ===
     prompt = f"""
-    You are an expert AI Video Director.
-    Input Video: {title}
-    Desc: {desc}
-    Task: Plan a NEW viral 9-12s Short (Derivative Work).
+    You are a 'Google Veo Prompt Engineering Expert' and a 'Cinematographer'.
     
-    REQUIREMENTS:
-    1. VEO PROMPT ONLY: Cinematic focus (lighting, camera, 4k, 60fps).
-    2. TAGS: 15-20 mixed tags.
-    3. SCRIPT: Visual-heavy description.
+    Original Video Context:
+    - Title: {title}
+    - Desc: {desc}
+    
+    TASK: 
+    Create a detailed prompt for Google Veo (VideoFX) to generate a high-quality, viral 8-10 second video.
+    The goal is to create a visually satisfying, photorealistic, or artistically stunning derivative work.
+    
+    CRITICAL VEO PROMPT RULES (Apply these to 'veo_prompt'):
+    1. **Structure:** [Camera Movement] + [Subject & Action] + [Lighting & Atmosphere] + [Technical Specs].
+    2. **Lighting:** Use words like 'Volumetric lighting', 'Golden hour', 'Soft studio lighting', 'Cinematic chiaroscuro', 'Tyndall effect'.
+    3. **Camera:** Use specific terms like 'Drone shot', 'Macro close-up', 'Low angle', 'Slow motion (60fps)', 'Dolly zoom', 'Rack focus'.
+    4. **Texture:** Describe materials (e.g., 'fluffy fur', 'metallic sheen', 'translucent gel', 'rough concrete').
+    5. **Continuity:** Describe a SINGLE continuous shot. Do not ask for cuts or edits.
+    6. **Quality:** Always include: '4k resolution', 'highly detailed', 'photorealistic', 'shallow depth of field'.
     
     OUTPUT JSON ONLY:
     {{
-        "title_en": "English Title",
-        "title_zh": "Traditional Chinese Title",
-        "veo_prompt": "English Veo Prompt",
-        "script_en": "English Script",
-        "script_zh": "Traditional Chinese Script",
-        "tags": "#Tags",
-        "comment": "Comment"
+        "title_en": "Punchy English Title (Short)",
+        "title_zh": "繁體中文標題 (吸睛)",
+        "veo_prompt": "THE EXPERT VEO PROMPT (English, detailed, cinematic keywords)",
+        "script_en": "Brief visual description of the scene",
+        "script_zh": "繁體中文畫面描述",
+        "tags": "#Tags (15-20 mixed)",
+        "comment": "Engaging comment"
     }}
     """
     try:
@@ -142,24 +151,22 @@ def generate_creative_content(title, desc, api_key, model_name):
     except Exception as e:
         return {"error": str(e)}
 
-# --- 6. 存檔 (結構維持版) ---
+# --- 6. 存檔 (維持省錢版結構：Kling 留白) ---
 def save_to_sheet(data, creds_dict):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        
         sheet = client.open("Shorts_Content_Planner").sheet1
         
-        # === 關鍵修改：欄位 F 強制填入空字串 ===
-        # A:時間, B:網址, C:英標, D:中標, E:Veo, F:Kling(留白), G:英腳本, H:中腳本, I:標籤, J:留言
+        # A-J 欄位
         row = [
             str(datetime.now())[:16],
             data.get('url', ''),
             data.get('title_en', ''),
             data.get('title_zh', ''),
             data.get('veo_prompt', ''),
-            "",  # <--- 這裡強制留白，對應 Kling 欄位，不影響 Sheet 結構
+            "",  # Kling 欄位留白
             data.get('script_en', ''),
             data.get('script_zh', ''),
             data.get('tags', ''),
@@ -172,7 +179,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("💰 Shorts 流量獵手 (Veo 省錢版)")
+st.title("💰 Shorts 流量獵手 (Veo 專家版)")
 
 if not keys["gemini"]:
     st.warning("⚠️ 請檢查 Secrets 設定")
@@ -220,12 +227,12 @@ else:
                 st.video(selected['url'])
                 
                 model_options = get_valid_models(keys["gemini"])
-                selected_model_name = st.selectbox("🤖 選擇 AI 模型", model_options)
+                selected_model_name = st.selectbox("🤖 選擇 AI 模型 (建議選 3.0 Pro)", model_options)
                 
-                if st.button("✨ 生成 Veo 專用腳本 (自動存檔)", type="primary"):
+                if st.button("✨ 生成 Veo 專家級腳本 (自動存檔)", type="primary"):
                     if not selected_model_name: st.error("請檢查 AI 模型")
                     else:
-                        with st.spinner("AI 導演正在撰寫劇本 (不含 Kling)..."):
+                        with st.spinner("AI 導演正在構思分鏡與光影..."):
                             ai_data = generate_creative_content(selected['title'], selected['desc'], keys['gemini'], selected_model_name)
                             
                             if "error" not in ai_data:
@@ -243,13 +250,18 @@ else:
                         cost_twd = ((u['input']/1e6 * 2.0) + (u['output']/1e6 * 12.0)) * 32.5
                         st.markdown(f"""
                         <div class="cost-box">
-                            <b>💰 本次成本 (已節省 Kling 費用):</b> 輸入 {u['input']} / 輸出 {u['output']}<br>
+                            <b>💰 本次成本:</b> 輸入 {u['input']} / 輸出 {u['output']}<br>
                             <b>預估費用: {cost_twd:.4f} TWD</b>
                         </div>
                         """, unsafe_allow_html=True)
 
-                    st.subheader("🎨 生成內容")
-                    st.text_area("Veo Prompt", value=data.get('veo_prompt',''), height=100)
+                    st.subheader("🎨 生成內容 (Veo 專家指令)")
+                    
+                    # 優化顯示：直接讓使用者好複製
+                    st.info("💡 請複製下方指令，貼到 VideoFX (Gemini Advanced)：")
+                    st.code(data.get('veo_prompt',''), language="text")
+                    
+                    st.divider()
                     st.text_input("中文標題", value=data.get('title_zh',''))
                     st.text_area("中文腳本", value=data.get('script_zh',''), height=120)
                     st.text_area("SEO 標籤", value=data.get('tags',''), height=60)
