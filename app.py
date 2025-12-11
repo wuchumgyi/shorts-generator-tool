@@ -8,7 +8,7 @@ import json
 import re
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="Shorts 流量獵手 (Pro計算版)", page_icon="💰", layout="wide")
+st.set_page_config(page_title="Shorts 流量獵手 (Veo專用版)", page_icon="🎬", layout="wide")
 st.markdown("""
     <style>
     .stButton>button {width: 100%; border-radius: 8px; font-weight: bold;}
@@ -103,12 +103,13 @@ def search_or_fetch_videos(api_key, query, days_filter=14, max_results=10):
         st.error(f"YouTube API 錯誤: {e}")
         return []
 
-# --- 5. AI 生成 ---
+# --- 5. AI 生成 (省錢版：移除 Kling) ---
 def generate_creative_content(title, desc, api_key, model_name):
     genai.configure(api_key=api_key)
     generation_config = genai.types.GenerationConfig(temperature=0.85, top_p=0.95, top_k=40)
     model = genai.GenerativeModel(model_name, generation_config=generation_config)
     
+    # === 修改點：Prompt 中移除了 Kling 的要求，只專注於 Veo ===
     prompt = f"""
     You are an expert AI Video Director.
     Input Video: {title}
@@ -116,16 +117,15 @@ def generate_creative_content(title, desc, api_key, model_name):
     Task: Plan a NEW viral 9-12s Short (Derivative Work).
     
     REQUIREMENTS:
-    1. VEO PROMPT: Cinematic focus (lighting, camera).
-    2. KLING PROMPT: Physics focus (motion, texture).
-    3. TAGS: 15-20 mixed tags.
+    1. VEO PROMPT ONLY: Cinematic focus (lighting, camera, 4k, 60fps).
+    2. TAGS: 15-20 mixed tags.
+    3. SCRIPT: Visual-heavy description.
     
     OUTPUT JSON ONLY:
     {{
         "title_en": "English Title",
         "title_zh": "Traditional Chinese Title",
         "veo_prompt": "English Veo Prompt",
-        "kling_prompt": "English Kling Prompt",
         "script_en": "English Script",
         "script_zh": "Traditional Chinese Script",
         "tags": "#Tags",
@@ -142,29 +142,28 @@ def generate_creative_content(title, desc, api_key, model_name):
     except Exception as e:
         return {"error": str(e)}
 
-# --- 6. 存檔 (修復版) ---
+# --- 6. 存檔 (結構維持版) ---
 def save_to_sheet(data, creds_dict):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # 請確認您的 Sheet 名稱是否正確
         sheet = client.open("Shorts_Content_Planner").sheet1
         
-        # === 關鍵修正：依照您的 Sheet 欄位順序 (A-J) ===
-        # A:時間, B:網址, C:英標, D:中標, E:Veo, F:Kling, G:英腳本, H:中腳本, I:標籤, J:留言
+        # === 關鍵修改：欄位 F 強制填入空字串 ===
+        # A:時間, B:網址, C:英標, D:中標, E:Veo, F:Kling(留白), G:英腳本, H:中腳本, I:標籤, J:留言
         row = [
-            str(datetime.now())[:16],   # A: 時間
-            data.get('url', ''),        # B: 來源網址 (使用 get 防止報錯)
-            data.get('title_en', ''),   # C: 英文標題
-            data.get('title_zh', ''),   # D: 中文標題
-            data.get('veo_prompt', ''), # E: Veo Prompt
-            data.get('kling_prompt', ''),# F: Kling Prompt
-            data.get('script_en', ''),  # G: 英文腳本
-            data.get('script_zh', ''),  # H: 中文腳本
-            data.get('tags', ''),       # I: 英文標籤
-            data.get('comment', '')     # J: 英文留言
+            str(datetime.now())[:16],
+            data.get('url', ''),
+            data.get('title_en', ''),
+            data.get('title_zh', ''),
+            data.get('veo_prompt', ''),
+            "",  # <--- 這裡強制留白，對應 Kling 欄位，不影響 Sheet 結構
+            data.get('script_en', ''),
+            data.get('script_zh', ''),
+            data.get('tags', ''),
+            data.get('comment', '')
         ]
         sheet.append_row(row)
         return True
@@ -173,7 +172,7 @@ def save_to_sheet(data, creds_dict):
         return False
 
 # --- 主介面 ---
-st.title("💰 Shorts 流量獵手 (Google Sheets 修復版)")
+st.title("💰 Shorts 流量獵手 (Veo 省錢版)")
 
 if not keys["gemini"]:
     st.warning("⚠️ 請檢查 Secrets 設定")
@@ -223,17 +222,14 @@ else:
                 model_options = get_valid_models(keys["gemini"])
                 selected_model_name = st.selectbox("🤖 選擇 AI 模型", model_options)
                 
-                if st.button("✨ 生成 Veo/Kling 專用腳本 (自動存檔)", type="primary"):
+                if st.button("✨ 生成 Veo 專用腳本 (自動存檔)", type="primary"):
                     if not selected_model_name: st.error("請檢查 AI 模型")
                     else:
-                        with st.spinner("AI 導演正在撰寫劇本..."):
+                        with st.spinner("AI 導演正在撰寫劇本 (不含 Kling)..."):
                             ai_data = generate_creative_content(selected['title'], selected['desc'], keys['gemini'], selected_model_name)
                             
                             if "error" not in ai_data:
-                                # === 關鍵修正步驟 ===
-                                # 手動將網址加入資料包，解決 KeyError: 'url'
                                 ai_data['url'] = selected['url'] 
-                                
                                 st.session_state.ai_data_full = ai_data
                                 if save_to_sheet(ai_data, keys['gcp_json']):
                                     st.toast("✅ 資料已成功寫入 Google Sheets!", icon="💾")
@@ -247,15 +243,13 @@ else:
                         cost_twd = ((u['input']/1e6 * 2.0) + (u['output']/1e6 * 12.0)) * 32.5
                         st.markdown(f"""
                         <div class="cost-box">
-                            <b>💰 本次成本 (Gemini 3.0 Pro):</b> 輸入 {u['input']} / 輸出 {u['output']}<br>
+                            <b>💰 本次成本 (已節省 Kling 費用):</b> 輸入 {u['input']} / 輸出 {u['output']}<br>
                             <b>預估費用: {cost_twd:.4f} TWD</b>
                         </div>
                         """, unsafe_allow_html=True)
 
                     st.subheader("🎨 生成內容")
-                    t1, t2 = st.tabs(["🎥 Veo Prompt", "⚡ Kling Prompt"])
-                    with t1: st.text_area("Veo", value=data.get('veo_prompt',''), height=100)
-                    with t2: st.text_area("Kling", value=data.get('kling_prompt',''), height=100)
+                    st.text_area("Veo Prompt", value=data.get('veo_prompt',''), height=100)
                     st.text_input("中文標題", value=data.get('title_zh',''))
                     st.text_area("中文腳本", value=data.get('script_zh',''), height=120)
                     st.text_area("SEO 標籤", value=data.get('tags',''), height=60)
